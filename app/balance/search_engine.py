@@ -76,6 +76,25 @@ class _TopKResults:
         return list(self._results)
 
 
+def _filter_by_quality(results: list[BalanceResult], max_cost_ratio: float) -> list[BalanceResult]:
+    """Keeps the best result always, and any additional result only if its
+    cost isn't wildly worse than the best (cost <= best_cost * max_cost_ratio).
+
+    Without this, "top 3" can include a badly lopsided split (e.g. every
+    top-rated player stacked onto one team) purely because it's the
+    *least-bad* of whatever else the budgeted DFS happened to explore -
+    "2위"/"3위" would then mislead an operator into thinking they're
+    comparably fair alternatives to 1위, when the cost gap says otherwise.
+    Better to honestly show fewer than k combos (same graceful-degradation
+    idea as the max_nodes/dedup logic above) than a dishonest-looking one."""
+    if not results:
+        return results
+    best_cost = results[0].cost
+    if best_cost <= 0:
+        return [r for r in results if r.cost <= 0] or results[:1]
+    return [results[0]] + [r for r in results[1:] if r.cost <= best_cost * max_cost_ratio]
+
+
 class BacktrackingSearchEngine(TeamSearchEngine):
     """v1 search algorithm. True exhaustive brute force is infeasible at
     this scale (20 players into 4 labeled teams of 5 is ~11.7 billion raw
@@ -116,6 +135,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         normalization_config: Optional[NormalizationConfig] = None,
         max_nodes: int = 20_000,
         time_budget_seconds: float = 5.0,
+        max_cost_ratio: float = 1.25,
     ) -> None:
         """Normal usage: pick `strategy` (Competitive/Comfort/Stable,
         default Stable Mode) and nothing else - the Features to run come
@@ -124,8 +144,12 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         Features exist or how many. `normalization_config` is typically a
         Server's saved override (see app/models/server.py); defaults to
         the code-level DEFAULT_NORMALIZATION_CONFIG when not given.
-        `evaluator`/`feature_registry`/`hard_constraints` are only for
-        tests/advanced callers who want to swap a piece independently."""
+        `max_cost_ratio` bounds how much worse a 2nd/3rd-place combo is
+        allowed to be relative to the 1st-place cost before search_top_k()
+        drops it instead of showing a misleadingly bad "alternative" (see
+        _filter_by_quality). `evaluator`/`feature_registry`/
+        `hard_constraints` are only for tests/advanced callers who want to
+        swap a piece independently."""
         self.position_assigner = position_assigner or BipartiteMatchingPositionAssigner()
         self.evaluator = evaluator or BalanceEvaluator()
         self.strategy = strategy or DEFAULT_STRATEGY
@@ -134,6 +158,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         self.normalization_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
         self.max_nodes = max_nodes
         self.time_budget_seconds = time_budget_seconds
+        self.max_cost_ratio = max_cost_ratio
 
     def search(self, players: list[Player], preferences: dict[int, RolePreference]) -> BalanceResult:
         return self.search_top_k(players, preferences, k=1)[0]
@@ -174,7 +199,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
             # a valid, fully-evaluated result regardless (see class
             # docstring's warm-start guarantee).
             return [warm_start_result]
-        return results
+        return _filter_by_quality(results, self.max_cost_ratio)
 
     def _build_teams(
         self, rosters: list[list[Player]], preferences: dict[int, RolePreference]

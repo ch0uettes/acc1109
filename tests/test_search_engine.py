@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.balance.config import HardConstraintConfig, NormalizationConfig
 from app.balance.constraints import HardConstraintLayer
 from app.balance.result import BalanceResult
-from app.balance.search_engine import BacktrackingSearchEngine, TeamSearchEngine
+from app.balance.search_engine import BacktrackingSearchEngine, TeamSearchEngine, _filter_by_quality
 from app.models.player import Player
 from app.position.preference_manager import RolePreferenceManager
 from app.utils.enums import Position, Tier
@@ -97,16 +97,20 @@ def _team_signature(result: BalanceResult) -> frozenset:
     return frozenset(frozenset(p.id for p in team.players) for team in result.teams)
 
 
-def test_search_top_k_returns_k_distinct_results_sorted_by_cost():
+def test_search_top_k_returns_distinct_results_sorted_by_cost():
+    # Up to k, not always exactly k - _filter_by_quality can legitimately
+    # drop a distinct-but-far-worse alternative (see the quality-gate
+    # tests below), so this only asserts what's returned is sorted and
+    # non-duplicate, not an exact count.
     engine = BacktrackingSearchEngine(max_nodes=2000, time_budget_seconds=3.0)
     players = _players(20)
     results = engine.search_top_k(players, _preferences(players), k=3)
 
-    assert len(results) == 3
+    assert 1 <= len(results) <= 3
     costs = [r.cost for r in results]
     assert costs == sorted(costs)
     signatures = {_team_signature(r) for r in results}
-    assert len(signatures) == 3  # no duplicate team-membership combinations
+    assert len(signatures) == len(results)  # no duplicate team-membership combinations
 
 
 def test_search_top_k_best_result_matches_plain_search():
@@ -161,6 +165,49 @@ def test_hard_constraint_layer_falls_back_to_warm_start_when_nothing_satisfies_i
     assert len(result.teams) == 2
     all_ids = [p.id for team in result.teams for p in team.players]
     assert sorted(all_ids) == sorted(p.id for p in players)
+
+
+# --- _filter_by_quality: 2위/3위가 1위보다 지나치게 나쁘면 아예 보여주지
+# 않는다 (극단적으로 불균형한 조합이 "대안"처럼 보이는 걸 방지). ---
+
+
+def test_filter_by_quality_drops_alternatives_far_worse_than_the_best():
+    good = BalanceResult(teams=[], cost=0.1)
+    ok = BalanceResult(teams=[], cost=0.15)
+    bad = BalanceResult(teams=[], cost=1.0)
+    assert _filter_by_quality([good, ok, bad], max_cost_ratio=2.0) == [good, ok]
+
+
+def test_filter_by_quality_keeps_everything_within_the_ratio():
+    a = BalanceResult(teams=[], cost=0.2)
+    b = BalanceResult(teams=[], cost=0.3)
+    c = BalanceResult(teams=[], cost=0.35)
+    assert _filter_by_quality([a, b, c], max_cost_ratio=2.0) == [a, b, c]
+
+
+def test_filter_by_quality_handles_zero_best_cost():
+    zero_a = BalanceResult(teams=[], cost=0.0)
+    zero_b = BalanceResult(teams=[], cost=0.0)
+    nonzero = BalanceResult(teams=[], cost=0.1)
+    assert _filter_by_quality([zero_a, zero_b, nonzero], max_cost_ratio=2.0) == [zero_a, zero_b]
+
+
+def test_search_top_k_drops_far_worse_combos_for_a_skewed_roster():
+    # Mirrors the real-world case that motivated this: a few very-high
+    # outliers plus a tightly clustered rest. Once the search moves past
+    # the one well-balanced split, remaining distinct partitions can be
+    # dramatically worse - those must not be presented as "2위/3위"
+    # alongside a much better 1위.
+    ratings = [3000, 2950, 2900, 2850, 2800] + [500 + i * 5 for i in range(15)]
+    players = _players(20, ratings=ratings)
+    engine = BacktrackingSearchEngine(max_nodes=3000, time_budget_seconds=3.0)
+
+    results = engine.search_top_k(players, _preferences(players), k=3)
+
+    assert len(results) >= 1
+    best_cost = results[0].cost
+    for extra in results[1:]:
+        assert extra.cost <= best_cost * engine.max_cost_ratio
 
 
 def test_search_normalizes_cost_to_a_bounded_range_regardless_of_rating_scale():
