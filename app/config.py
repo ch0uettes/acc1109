@@ -23,10 +23,15 @@ def _build_settings() -> Settings:
     data_dir = base_dir / "data"
     data_dir.mkdir(exist_ok=True)
     db_path = data_dir / "app.db"
+    # Local dev defaults to a SQLite file; deployed instances (e.g. Streamlit
+    # Community Cloud, whose filesystem is wiped on every redeploy) set
+    # DATABASE_URL to a persistent hosted Postgres instead (Supabase/Neon
+    # free tier) via st.secrets/env - see DEPLOY.md.
+    database_url = os.environ.get("DATABASE_URL") or f"sqlite:///{db_path}"
     return Settings(
         base_dir=base_dir,
         data_dir=data_dir,
-        database_url=f"sqlite:///{db_path}",
+        database_url=database_url,
         riot_api_key=os.environ.get("RIOT_API_KEY"),
         riot_platform=os.environ.get("RIOT_PLATFORM", "kr"),
         riot_region=os.environ.get("RIOT_REGION", "asia"),

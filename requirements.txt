@@ -2,6 +2,7 @@ fastapi
 uvicorn
 streamlit
 sqlalchemy
+psycopg2-binary
 pydantic
 numpy
 pandas
