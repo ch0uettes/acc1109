@@ -16,6 +16,13 @@ from app.utils.exceptions import InvalidPlayerCountError
 
 NO_SUB_ROLE = "없음"
 
+# A combo costing more than this multiple of 1위's cost gets a visible
+# warning instead of being silently dropped from the tab list (see
+# BacktrackingSearchEngine's max_cost_ratio docstring for why filtering
+# is opt-in, not default) - operators still get to see every distinct
+# alternative, just not misled into thinking they're equally fair.
+WORSE_THAN_BEST_WARNING_RATIO = 1.25
+
 BREAKDOWN_LABELS = {
     "average_rating": "팀 평균 격차",
     "team_variance": "팀 내부 편차 격차",
@@ -74,9 +81,12 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
     st.caption(f"밸런싱 전략: {STRATEGY_LABELS[strategy_key]} · 상위 {len(results)}개 조합")
 
     labels = [f"조합 {i + 1}위 (cost {r.cost:.1f})" for i, r in enumerate(results)]
+    best_cost = results[0].cost
     tabs = st.tabs(labels)
     for tab, result in zip(tabs, results):
         with tab:
+            if best_cost > 0 and result.cost > best_cost * WORSE_THAN_BEST_WARNING_RATIO:
+                st.warning("이 조합은 1위보다 균형이 상당히 떨어집니다 - 대안으로 참고만 하세요.")
             _render_combo(result)
 
     save_label = st.selectbox("저장할 조합 선택", labels)

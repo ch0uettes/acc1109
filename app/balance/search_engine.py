@@ -79,14 +79,17 @@ class _TopKResults:
 def _filter_by_quality(results: list[BalanceResult], max_cost_ratio: float) -> list[BalanceResult]:
     """Keeps the best result always, and any additional result only if its
     cost isn't wildly worse than the best (cost <= best_cost * max_cost_ratio).
+    Opt-in (BacktrackingSearchEngine's default max_cost_ratio is infinite,
+    i.e. a no-op) - operators generally want to see up to k real
+    alternatives rather than have them silently disappear; a caller that
+    wants a stricter "high-quality-only" top-k can pass a finite ratio.
 
-    Without this, "top 3" can include a badly lopsided split (e.g. every
-    top-rated player stacked onto one team) purely because it's the
-    *least-bad* of whatever else the budgeted DFS happened to explore -
-    "2위"/"3위" would then mislead an operator into thinking they're
-    comparably fair alternatives to 1위, when the cost gap says otherwise.
-    Better to honestly show fewer than k combos (same graceful-degradation
-    idea as the max_nodes/dedup logic above) than a dishonest-looking one."""
+    When this IS enabled: without it, "top 3" can include a badly lopsided
+    split (e.g. every top-rated player stacked onto one team) purely
+    because it's the *least-bad* of whatever else the budgeted DFS
+    happened to explore - "2위"/"3위" would then look like comparably fair
+    alternatives to 1위 unless something (this filter, or a UI warning
+    label - see team_page.py) makes the cost gap visible."""
     if not results:
         return results
     best_cost = results[0].cost
@@ -135,7 +138,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         normalization_config: Optional[NormalizationConfig] = None,
         max_nodes: int = 20_000,
         time_budget_seconds: float = 5.0,
-        max_cost_ratio: float = 1.25,
+        max_cost_ratio: float = float("inf"),
     ) -> None:
         """Normal usage: pick `strategy` (Competitive/Comfort/Stable,
         default Stable Mode) and nothing else - the Features to run come
@@ -144,12 +147,16 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         Features exist or how many. `normalization_config` is typically a
         Server's saved override (see app/models/server.py); defaults to
         the code-level DEFAULT_NORMALIZATION_CONFIG when not given.
-        `max_cost_ratio` bounds how much worse a 2nd/3rd-place combo is
-        allowed to be relative to the 1st-place cost before search_top_k()
-        drops it instead of showing a misleadingly bad "alternative" (see
-        _filter_by_quality). `evaluator`/`feature_registry`/
-        `hard_constraints` are only for tests/advanced callers who want to
-        swap a piece independently."""
+        `max_cost_ratio` optionally bounds how much worse a 2nd/3rd-place
+        combo is allowed to be relative to the 1st-place cost before
+        search_top_k() drops it (see _filter_by_quality) - defaults to
+        "off" (always return up to k distinct combos) so operators get
+        real alternatives to choose from; the UI is expected to flag a
+        combo whose cost is meaningfully worse than 1위 instead of hiding
+        it outright (see team_page.py). Tighten this per-call if a
+        stricter "high-quality-only" top-k is ever wanted instead.
+        `evaluator`/`feature_registry`/`hard_constraints` are only for
+        tests/advanced callers who want to swap a piece independently."""
         self.position_assigner = position_assigner or BipartiteMatchingPositionAssigner()
         self.evaluator = evaluator or BalanceEvaluator()
         self.strategy = strategy or DEFAULT_STRATEGY
