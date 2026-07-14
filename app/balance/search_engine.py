@@ -198,8 +198,18 @@ class BacktrackingSearchEngine(TeamSearchEngine):
             # so strictly that nothing explored satisfies it - guarantee
             # a valid, fully-evaluated result regardless (see class
             # docstring's warm-start guarantee).
-            return [warm_start_result]
-        return _filter_by_quality(results, self.max_cost_ratio)
+            results = [warm_start_result]
+        else:
+            results = _filter_by_quality(results, self.max_cost_ratio)
+
+        # explain() is only computed for the handful of results actually
+        # returned, not every leaf visited during the DFS - it's cheap
+        # per-call but there's no reason to pay it thousands of times
+        # over for candidates that never make top-K.
+        for result in results:
+            normalized = self.evaluator.normalize(result.cost_breakdown, features)
+            result.contributions = self.evaluator.explain(result.cost_breakdown, normalized, self.strategy)
+        return results
 
     def _build_teams(
         self, rosters: list[list[Player]], preferences: dict[int, RolePreference]

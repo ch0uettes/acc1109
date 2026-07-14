@@ -42,6 +42,18 @@ def test_stable_prioritizes_average_rating_over_team_variance():
     assert config["tier_distribution"].weight >= config["role_penalty"].weight
 
 
+def test_every_strategy_weighs_cross_team_measures_above_within_team_variance():
+    # inter_team_balance/average_rating both measure cross-team average
+    # parity; team_variance measures within-team homogeneity only. The
+    # combined cross-team weight must clearly outweigh team_variance in
+    # every Strategy, or clustering similar tiers onto the same team can
+    # structurally win over genuinely balanced cross-team splits.
+    for strategy_cls in STRATEGY_REGISTRY.values():
+        config = strategy_cls().feature_config()
+        cross_team_weight = config["inter_team_balance"].weight + config["average_rating"].weight
+        assert cross_team_weight > config["team_variance"].weight
+
+
 def test_strategies_are_independent_instances_not_shared_state():
     a = CompetitiveStrategy().feature_config()
     b = CompetitiveStrategy().feature_config()

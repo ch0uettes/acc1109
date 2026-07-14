@@ -68,12 +68,24 @@ class NormalizationConfig:
     starting point, not a guarantee of "correct" - tune per server if a
     community's real rating spread differs."""
 
-    average_rating_midpoint: float = 400.0
-    average_rating_steepness: float = 0.0075
+    # average_rating is now stddev-of-team-averages (not max-min), which
+    # runs noticeably smaller in raw magnitude than max-min did for the
+    # same distribution (empirically ~1/2.5x for a 4-team split) - the
+    # midpoint/steepness are recalibrated accordingly, not just copied
+    # from the old max-min-era defaults.
+    average_rating_midpoint: float = 160.0
+    average_rating_steepness: float = 0.0184
     internal_rating_midpoint: float = 400.0
     internal_rating_steepness: float = 0.0075
-    lane_difference_max: float = 5000.0
+    # lane_difference is now an RMS of per-lane gaps (not a sum), so its
+    # raw scale sits closer to a single bad lane's gap rather than 5x
+    # that - recalibrated down from the old sum-based ceiling.
+    lane_difference_max: float = 2500.0
     team_variance_scale: float = 200_000.0
+    # variance (not stddev) of team averages - squares deviations, so a
+    # single team far from the mean is penalized much harder than the
+    # same gap spread evenly across teams (see InterTeamBalanceFeature).
+    inter_team_balance_scale: float = 200_000.0
     tier_distribution_breakpoints: tuple[tuple[float, float], ...] = (
         (0.0, 0.0),
         (2.0, 0.2),

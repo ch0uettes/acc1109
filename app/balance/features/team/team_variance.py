@@ -9,9 +9,16 @@ from app.models.team import Team
 
 
 class TeamVarianceFeature(IBalanceFeature):
-    """Gap between teams' internal rating spread, so one team isn't
-    'one carry + four weak' while the other is all-average - preferred
-    even when both teams' averages are identical.
+    """Gap between teams' *internal* rating spread only - "is one team a
+    single carry + four weak players while another is uniformly
+    average," never "are the teams' averages close to each other." That
+    latter question belongs entirely to AverageRatingFeature/
+    InterTeamBalanceFeature - this Feature must never be weighted so
+    heavily that it rewards clustering similar-rated players onto the
+    same team purely to shrink each team's own internal spread, since
+    that can widen the cross-team average gap those other two Features
+    are responsible for catching (a Strategy's weight table should keep
+    this below the combined weight of the cross-team Features).
 
     Normalized via a Logarithmic curve, not linearly - pvariance's raw
     unit is squared rating points, so its dynamic range dwarfs every
@@ -22,10 +29,10 @@ class TeamVarianceFeature(IBalanceFeature):
 
     name = "team_variance"
     category = "team"
-    description = "팀 내부 Rating 분산 계산"
+    description = "팀 내부 Rating 분산 계산 (팀 간 평균 격차는 담당하지 않음)"
     default_enabled = True
-    default_weight = 0.25
-    priority = FeaturePriority.HIGH
+    default_weight = 0.10
+    priority = FeaturePriority.MEDIUM
 
     def __init__(self, config: NormalizationConfig = DEFAULT_NORMALIZATION_CONFIG) -> None:
         self._normalizer = LogarithmicNormalizer(config.team_variance_scale)

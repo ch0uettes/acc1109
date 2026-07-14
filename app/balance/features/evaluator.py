@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.balance.features.base import IBalanceFeature
+from app.balance.result import FeatureContribution
 from app.balance.strategy import IBalanceStrategy
 from app.models.team import Team
 
@@ -18,6 +19,7 @@ class BalanceEvaluator:
         raw = evaluator.evaluate_raw(teams, features)          # display
         normalized = evaluator.normalize(raw, features)        # ranking input
         cost = evaluator.combine(normalized, strategy)
+        contributions = evaluator.explain(raw, normalized, strategy)  # debugging/UI
 
     Categories, Features, and Strategies never talk to each other
     directly - this is the one place their outputs get combined."""
@@ -39,3 +41,33 @@ class BalanceEvaluator:
                 continue
             total += value * weight
         return total
+
+    def explain(
+        self,
+        raw_breakdown: dict[str, float],
+        normalized_breakdown: dict[str, float],
+        strategy: IBalanceStrategy,
+    ) -> list[FeatureContribution]:
+        """Per-Feature audit trail (raw -> normalized -> weight ->
+        contribution -> % of total cost), sorted by contribution
+        descending - "which Feature actually drove this result" should
+        never require re-deriving the math by hand."""
+        total = self.combine(normalized_breakdown, strategy)
+        contributions = []
+        for name, raw in raw_breakdown.items():
+            normalized = normalized_breakdown.get(name, 0.0)
+            weight = strategy.get_weight(name)
+            contribution = normalized * weight
+            contribution_pct = (contribution / total * 100.0) if total > 0 else 0.0
+            contributions.append(
+                FeatureContribution(
+                    name=name,
+                    raw=raw,
+                    normalized=normalized,
+                    weight=weight,
+                    contribution=contribution,
+                    contribution_pct=contribution_pct,
+                )
+            )
+        contributions.sort(key=lambda c: c.contribution, reverse=True)
+        return contributions

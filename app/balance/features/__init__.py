@@ -14,7 +14,12 @@ from app.balance.features.registry import (
     default_balance_evaluator,
 )
 from app.balance.features.synergy import SynergyFeature
-from app.balance.features.team import PenaltyFeature, TeamVarianceFeature, TierDistributionFeature
+from app.balance.features.team import (
+    InterTeamBalanceFeature,
+    PenaltyFeature,
+    TeamVarianceFeature,
+    TierDistributionFeature,
+)
 
 # Re-exports every public name from this package's internals, so
 # `from app.balance.features import X` keeps working unchanged everywhere
@@ -31,6 +36,7 @@ __all__ = [
     "default_balance_evaluator",
     "AverageRatingFeature",
     "InternalRatingFeature",
+    "InterTeamBalanceFeature",
     "LaneBalanceFeature",
     "RolePenaltyFeature",
     "TeamVarianceFeature",

@@ -113,6 +113,20 @@ def test_search_top_k_returns_distinct_results_sorted_by_cost():
     assert len(signatures) == len(results)  # no duplicate team-membership combinations
 
 
+def test_search_populates_feature_contributions_for_returned_results():
+    # explain() is only computed for the final returned results, not
+    # every leaf visited - verify it actually lands on BalanceResult.
+    engine = BacktrackingSearchEngine(max_nodes=200, time_budget_seconds=2.0)
+    players = _players(10)
+    result = engine.search(players, _preferences(players))
+
+    assert len(result.contributions) > 0
+    names = {c.name for c in result.contributions}
+    assert names == set(result.cost_breakdown.keys())
+    total_contribution = sum(c.contribution for c in result.contributions)
+    assert total_contribution == pytest.approx(result.cost)
+
+
 def test_search_top_k_best_result_matches_plain_search():
     engine = BacktrackingSearchEngine(max_nodes=2000, time_budget_seconds=3.0)
     players = _players(10)

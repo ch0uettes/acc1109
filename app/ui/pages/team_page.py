@@ -17,10 +17,11 @@ from app.utils.exceptions import InvalidPlayerCountError
 NO_SUB_ROLE = "없음"
 
 BREAKDOWN_LABELS = {
-    "average_rating": "팀 평균 격차",
+    "average_rating": "팀 평균 표준편차",
+    "inter_team_balance": "팀 간 평균 분산",
     "team_variance": "팀 내부 편차 격차",
     "role_penalty": "포지션 페널티",
-    "lane_balance": "라인별 격차",
+    "lane_balance": "라인별 격차 (RMS)",
     "tier_distribution": "티어 분포 격차",
     "internal_rating": "내전 전용 Rating 격차 (신뢰도 보정)",
 }
@@ -87,10 +88,24 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
 
 
 def _render_combo(result) -> None:
-    breakdown_text = " · ".join(
-        f"{BREAKDOWN_LABELS.get(k, k)}: {v:.1f}" for k, v in result.cost_breakdown.items()
-    )
-    st.caption(f"cost = {result.cost:.2f} | {breakdown_text}")
+    st.caption(f"총 점수 (cost) = {result.cost:.3f}")
+    if result.contributions:
+        with st.expander("Feature별 기여도 (Raw → Normalized → Weight → Contribution)", expanded=False):
+            st.dataframe(
+                [
+                    {
+                        "Feature": BREAKDOWN_LABELS.get(c.name, c.name),
+                        "Raw": round(c.raw, 2),
+                        "Normalized": round(c.normalized, 3),
+                        "Weight": c.weight,
+                        "Contribution": round(c.contribution, 4),
+                        "기여도": f"{c.contribution_pct:.0f}%",
+                    }
+                    for c in result.contributions
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
 
     columns = st.columns(len(result.teams))
     for col, team in zip(columns, result.teams):
