@@ -30,9 +30,15 @@ def test_comfort_prioritizes_role_penalty_over_lane_balance():
     assert config["role_penalty"].weight > config["lane_balance"].weight
 
 
-def test_stable_prioritizes_team_variance_and_tier_distribution():
+def test_stable_prioritizes_average_rating_over_team_variance():
+    # average_rating (cross-team parity) must never be outweighed by
+    # team_variance (within-team homogeneity) - team_variance rewarding
+    # "similar tiers clustered on the same team" can otherwise win out
+    # over closer cross-team averages, which is backwards: team_variance
+    # is meant to break ties among already-close-average splits, not
+    # override average parity.
     config = StableStrategy().feature_config()
-    assert config["team_variance"].weight >= config["average_rating"].weight
+    assert config["average_rating"].weight >= config["team_variance"].weight
     assert config["tier_distribution"].weight >= config["role_penalty"].weight
 
 

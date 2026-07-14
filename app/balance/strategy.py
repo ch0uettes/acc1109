@@ -65,17 +65,23 @@ class ComfortStrategy(IBalanceStrategy):
 
 
 class StableStrategy(IBalanceStrategy):
-    """기본(Default) Strategy - 대부분의 일반 내전에 적합. 평균
-    Rating보다 팀 내부 분산과 티어 분포의 유사성을 더 무겁게 평가해
-    "체감 밸런스"를 우선한다."""
+    """기본(Default) Strategy - 대부분의 일반 내전에 적합. 팀 간 평균
+    Rating 격차가 가장 근본적인 공정성 기준이므로 average_rating이
+    항상 최고 가중치를 갖는다. team_variance/tier_distribution("체감
+    밸런스" - 한 팀에 캐리 1명 + 약자 4명처럼 팀 내부가 극단적으로
+    쏠리지 않는 것)은 그다음으로 무겁게 평가하되, average_rating보다
+    낮게 둔다 - 그렇지 않으면 비슷한 티어끼리 팀 내부적으로만 뭉쳐서
+    팀 간 평균 격차를 오히려 키우는 조합이 구조적으로 유리해질 수
+    있다 (team_variance는 "팀 간 평균이 비슷할 때 그중 더 나은 조합을
+    고르는" 보조 기준이어야 한다)."""
 
     name = "stable"
 
     def feature_config(self) -> dict[str, FeatureConfig]:
         return {
-            "team_variance": FeatureConfig(enabled=True, weight=0.25),
+            "average_rating": FeatureConfig(enabled=True, weight=0.25),
+            "team_variance": FeatureConfig(enabled=True, weight=0.20),
             "tier_distribution": FeatureConfig(enabled=True, weight=0.20),
-            "average_rating": FeatureConfig(enabled=True, weight=0.20),
             "lane_balance": FeatureConfig(enabled=True, weight=0.15),
             "internal_rating": FeatureConfig(enabled=True, weight=0.15),
             "role_penalty": FeatureConfig(enabled=True, weight=0.03),
