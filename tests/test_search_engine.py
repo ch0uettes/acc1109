@@ -192,25 +192,15 @@ def test_filter_by_quality_handles_zero_best_cost():
     assert _filter_by_quality([zero_a, zero_b, nonzero], max_cost_ratio=2.0) == [zero_a, zero_b]
 
 
-def test_search_top_k_default_never_drops_a_distinct_alternative():
-    # max_cost_ratio defaults to "off" - operators want to see up to k
-    # real alternatives (surfaced with a UI warning when one is much
-    # worse - see team_page.py) rather than have them silently vanish.
+def test_search_top_k_drops_far_worse_combos_for_a_skewed_roster():
+    # Mirrors the real-world case that motivated this: a few very-high
+    # outliers plus a tightly clustered rest. Once the search moves past
+    # the one well-balanced split, remaining distinct partitions can be
+    # dramatically worse - those must not be presented as "2위/3위"
+    # alongside a much better 1위. max_cost_ratio defaults to 1.25.
     ratings = [3000, 2950, 2900, 2850, 2800] + [500 + i * 5 for i in range(15)]
     players = _players(20, ratings=ratings)
     engine = BacktrackingSearchEngine(max_nodes=3000, time_budget_seconds=3.0)
-
-    results = engine.search_top_k(players, _preferences(players), k=3)
-
-    assert len(results) >= 1  # exact count depends on how many distinct splits exist
-
-
-def test_search_top_k_opt_in_quality_gate_drops_far_worse_combos():
-    # A caller that explicitly wants a stricter "high-quality-only" top-k
-    # can still opt in via max_cost_ratio.
-    ratings = [3000, 2950, 2900, 2850, 2800] + [500 + i * 5 for i in range(15)]
-    players = _players(20, ratings=ratings)
-    engine = BacktrackingSearchEngine(max_nodes=3000, time_budget_seconds=3.0, max_cost_ratio=1.25)
 
     results = engine.search_top_k(players, _preferences(players), k=3)
 
