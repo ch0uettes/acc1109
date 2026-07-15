@@ -40,6 +40,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
         _render_transfer_ownership(service, server_id, actor, members)
 
     if has_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS):
+        _render_season_label(service, server_id, actor)
         _render_balance_config(service, server_id, actor)
 
     st.subheader("역할 변경 이력 (Audit Log)")
@@ -133,6 +134,29 @@ def _render_transfer_ownership(
                 st.error(str(exc))
             else:
                 st.success(f"{target}에게 Owner를 이전했습니다.")
+                st.rerun()
+
+
+def _render_season_label(service: ServerService, server_id: int, actor: ServerMembership) -> None:
+    st.subheader("현재 시즌 라벨")
+    st.caption(
+        "PlayerSeasonRank 기록에 붙는 메타데이터일 뿐, 밸런스 계산에는 쓰이지 않습니다. "
+        "서버마다 다른 시즌/스플릿을 쓸 수 있어 서버별로 관리합니다."
+    )
+    server = service.get_server(server_id)
+    if server is None:
+        return
+
+    with st.form("season_label_form"):
+        label = st.text_input("현재 시즌 라벨", value=server.current_season_label)
+        submitted = st.form_submit_button("저장")
+        if submitted:
+            try:
+                service.update_season_label(server_id, actor.display_name, label)
+            except AppError as exc:
+                st.error(str(exc))
+            else:
+                st.success("현재 시즌 라벨을 저장했습니다.")
                 st.rerun()
 
 

@@ -135,9 +135,11 @@ def test_player_role_cannot_override_internal_rating(session):
     created = service.create_player(_player("대상"), actor_role=Role.SERVER_ADMIN)
 
     with pytest.raises(PermissionDeniedError):
-        service.override_internal_rating(created.id, 999.0, actor_role=Role.PLAYER)
+        service.override_internal_rating(created.id, 999.0, actor_role=Role.PLAYER, changed_by="누군가")
 
-    updated = service.override_internal_rating(created.id, 999.0, actor_role=Role.SERVER_ADMIN)
+    updated = service.override_internal_rating(
+        created.id, 999.0, actor_role=Role.SERVER_ADMIN, changed_by="admin"
+    )
     assert updated.internal_rating == 999.0
 
 

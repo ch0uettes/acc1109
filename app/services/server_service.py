@@ -129,6 +129,16 @@ class ServerService:
         require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
         return self.server_repo.update_balance_config(server_id, normalization, hard_constraint)
 
+    def update_season_label(self, server_id: int, actor_display_name: str, label: str) -> Server:
+        """Owner/Server Admin only - overrides this Server's current
+        season label (stamped onto future PlayerSeasonRank snapshots,
+        never a scoring input). Same permission tier as
+        update_balance_config since both are server-wide settings edited
+        on the same 서버 관리 page."""
+        actor = self._require_member(server_id, actor_display_name)
+        require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
+        return self.server_repo.update_season_label(server_id, label)
+
     def _change_role(
         self, server_id: int, target: ServerMembership, new_role: Role, changed_by: str, reason: str | None
     ) -> ServerMembership:

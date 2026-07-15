@@ -19,3 +19,7 @@ class BalanceError(AppError):
 
 class PermissionDeniedError(AppError):
     pass
+
+
+class InvalidRatingValueError(AppError):
+    pass

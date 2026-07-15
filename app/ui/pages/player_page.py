@@ -10,7 +10,7 @@ from app.rating.official import master_stage_from
 from app.rating.resolver import TierSnapshot
 from app.services.player_service import PlayerService
 from app.services.rbac import Permission, has_permission
-from app.utils.exceptions import PermissionDeniedError
+from app.utils.exceptions import AppError, PermissionDeniedError
 from app.utils.enums import Division, Position, RatingSource, Tier
 
 # UNRANKED only ever comes from having no current-season rank at all - it's
@@ -317,6 +317,9 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
             disabled=not can_override_rating,
             key="edit_internal_rating_override",
         )
+        internal_rating_reason = st.text_input(
+            "Internal Rating 변경 사유 (선택)", disabled=not can_override_rating, key="edit_internal_rating_reason"
+        )
 
         is_seed = new_tier == Tier.UNRANKED
         new_seed_tier = None
@@ -391,9 +394,17 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
                     service.update_player(updated, actor_role=actor.role)
 
                 if can_override_rating and new_internal_rating != target.internal_rating:
-                    service.override_internal_rating(target.id, float(new_internal_rating), actor.role)
+                    service.override_internal_rating(
+                        target.id,
+                        float(new_internal_rating),
+                        actor.role,
+                        changed_by=actor.display_name,
+                        reason=internal_rating_reason or None,
+                    )
             except PermissionDeniedError as exc:
                 st.error(f"권한이 없습니다: {exc}")
+            except AppError as exc:
+                st.error(str(exc))
             else:
                 st.success(f"{target.nickname} 수정 완료")
                 st.rerun()

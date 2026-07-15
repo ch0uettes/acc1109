@@ -6,9 +6,12 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database.repositories.internal_rating_change_repository import InternalRatingChangeRepository
 from app.database.repositories.player_repository import PlayerRepository
 from app.database.repositories.season_rank_repository import SeasonRankRepository
 from app.database.repositories.seed_rating_change_repository import SeedRatingChangeRepository
+from app.database.repositories.server_repository import ServerRepository
+from app.models.internal_rating_change import InternalRatingChange
 from app.models.player import Player
 from app.models.season_rank import PlayerSeasonRank
 from app.models.seed_rating_change import SeedRatingChange
@@ -19,6 +22,9 @@ from app.rating.resolver import RatingCaseResolver, RatingResolution, TierSnapsh
 from app.riot.client import RiotAPIClient, build_riot_client
 from app.services.rbac import Permission, require_permission
 from app.utils.enums import Division, Position, RatingSource, Role, Tier
+from app.utils.exceptions import InvalidRatingValueError
+
+MAX_INTERNAL_RATING_MAGNITUDE = 3000.0
 
 
 class PlayerService:
@@ -33,11 +39,14 @@ class PlayerService:
         riot_client: Optional[RiotAPIClient] = None,
         official_rating_strategy: Optional[OfficialRatingStrategy] = None,
         position_analyzer: Optional[PositionAnalyzer] = None,
+        server_repo: Optional[ServerRepository] = None,
     ) -> None:
         self.server_id = server_id
         self.repo = PlayerRepository(session, server_id)
         self.season_rank_repo = SeasonRankRepository(session, server_id)
         self.seed_rating_change_repo = SeedRatingChangeRepository(session)
+        self.internal_rating_change_repo = InternalRatingChangeRepository(session)
+        self.server_repo = server_repo or ServerRepository(session)
         self.official_rating_strategy = official_rating_strategy or CurrentTierPriorityStrategy()
         self.riot_client = riot_client or build_riot_client()
         self.position_analyzer = position_analyzer or RiotHistoryPositionAnalyzer(self.riot_client)
@@ -144,7 +153,14 @@ class PlayerService:
         self._log_seed_rating_change(player_id, old_seed_rating, new_seed_rating, changed_by, reason)
         return saved
 
-    def override_internal_rating(self, player_id: int, new_internal_rating: float, actor_role: Role) -> Player:
+    def override_internal_rating(
+        self,
+        player_id: int,
+        new_internal_rating: float,
+        actor_role: Role,
+        changed_by: str,
+        reason: Optional[str] = None,
+    ) -> Player:
         """Manual admin override of internal_rating - the normal path is
         earned automatically through match results (see
         rating.updater.ExpectedPerformanceUpdateStrategy), never
@@ -152,11 +168,52 @@ class PlayerService:
         (e.g. a calibration bug, or a player who's obviously stronger/
         weaker than their earned Internal Rating suggests) - same
         permission tier as set_seed_rating() since both let an operator's
-        judgment override a normally-computed rating."""
+        judgment override a normally-computed rating, and same audit
+        discipline: every change is logged with old/new value, who, when,
+        why (see _log_internal_rating_change).
+
+        Negative values are legitimate (internal_rating is a relative
+        correction, not an absolute rank - an underperforming high-tier
+        player can rightly have a negative one), so only the *magnitude*
+        is bounded: this app's scale is ~400 rating points per tier
+        (TIER_BASE_SCORE, capped at MASTER=2800 then unbounded via LP),
+        so 3000 comfortably exceeds any plausible single value while
+        still catching an operator's typo."""
+        if abs(new_internal_rating) > MAX_INTERNAL_RATING_MAGNITUDE:
+            raise InvalidRatingValueError(
+                f"Internal Rating {new_internal_rating} exceeds the allowed magnitude "
+                f"of {MAX_INTERNAL_RATING_MAGNITUDE}"
+            )
         require_permission(actor_role, Permission.SET_SEED_RATING)
         player = self.repo.get(player_id)
+        old_internal_rating = player.internal_rating
         updated = player.model_copy(update={"internal_rating": new_internal_rating})
-        return self.repo.update(updated)
+        saved = self.repo.update(updated)
+        self._log_internal_rating_change(player_id, old_internal_rating, new_internal_rating, changed_by, reason)
+        return saved
+
+    def _log_internal_rating_change(
+        self,
+        player_id: int,
+        old_internal_rating: float,
+        new_internal_rating: float,
+        changed_by: str,
+        reason: Optional[str],
+    ) -> None:
+        self.internal_rating_change_repo.add(
+            InternalRatingChange(
+                player_id=player_id,
+                server_id=self.server_id,
+                old_internal_rating=old_internal_rating,
+                new_internal_rating=new_internal_rating,
+                changed_by=changed_by,
+                changed_at=datetime.utcnow(),
+                reason=reason,
+            )
+        )
+
+    def internal_rating_history(self, player_id: int) -> list[InternalRatingChange]:
+        return self.internal_rating_change_repo.list_for_player(player_id)
 
     def _log_seed_rating_change(
         self,
@@ -241,10 +298,12 @@ class PlayerService:
 
     def _record_season_snapshot(self, player: Player) -> None:
         assert player.id is not None
+        server = self.server_repo.get(self.server_id)
+        season_label = server.current_season_label if server is not None else settings.current_season_label
         self.season_rank_repo.add(
             PlayerSeasonRank(
                 player_id=player.id,
-                season=settings.current_season_label,
+                season=season_label,
                 current_tier=player.tier,
                 current_division=player.division,
                 current_lp=player.lp,

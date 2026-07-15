@@ -22,3 +22,8 @@ class ServerEntity(Base):
     # diff, so loading never has to merge with the code-level default.
     normalization_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     hard_constraint_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    # NULL = use settings.current_season_label (env-var default) - only set
+    # once an Owner/Server Admin saves an override via the 서버 관리 page.
+    # Per-server because different Discord servers/leagues can be on
+    # different splits, unlike the old single global env var.
+    current_season_label: Mapped[Optional[str]] = mapped_column(nullable=True, default=None)

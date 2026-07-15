@@ -8,6 +8,7 @@ from app.balance.config import DEFAULT_NORMALIZATION_CONFIG, NormalizationConfig
 from app.balance.constraints import HardConstraintLayer
 from app.balance.features import DEFAULT_FEATURE_REGISTRY, BalanceEvaluator, FeatureRegistry
 from app.balance.result import BalanceResult
+from app.balance.search_policy import SEARCH_POLICY_REGISTRY, SearchPolicy, StableSearchPolicy
 from app.balance.strategy import DEFAULT_STRATEGY, IBalanceStrategy
 from app.models.player import Player
 from app.models.team import Team
@@ -102,8 +103,11 @@ class BacktrackingSearchEngine(TeamSearchEngine):
     global-optimum guarantee, just a good-effort search within a node/time
     budget that always returns a valid, fully-evaluated result.
 
-    - Players are processed one at a time, sorted descending by
-      final_rating (tightens the search early, gives deterministic output).
+    - Players are processed one at a time, ordered by the active
+      SearchPolicy (default: descending final_rating - tightens the
+      search early, gives deterministic output; see
+      app/balance/search_policy.py for how a Strategy influences which
+      candidates get explored, not just how they're scored).
     - Branches over which not-yet-full team to place the current player
       in - branching factor is num_teams, not the full partition count.
     - Symmetry-broken: never opens team t+1 before team t has >=1 player,
@@ -130,6 +134,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         position_assigner: Optional[PositionAssigner] = None,
         evaluator: Optional[BalanceEvaluator] = None,
         strategy: Optional[IBalanceStrategy] = None,
+        search_policy: Optional[SearchPolicy] = None,
         feature_registry: Optional[FeatureRegistry] = None,
         hard_constraints: Optional[HardConstraintLayer] = None,
         normalization_config: Optional[NormalizationConfig] = None,
@@ -141,7 +146,11 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         default Stable Mode) and nothing else - the Features to run come
         from `feature_registry.get_active_features(strategy, normalization_config)`
         fresh on every search, so this class never hardcodes which
-        Features exist or how many. `normalization_config` is typically a
+        Features exist or how many. `search_policy` defaults to whichever
+        concrete SearchPolicy is registered under `strategy.name` (falling
+        back to StableSearchPolicy), so picking a Strategy also picks a
+        matching candidate-exploration order without extra wiring - see
+        app/balance/search_policy.py. `normalization_config` is typically a
         Server's saved override (see app/models/server.py); defaults to
         the code-level DEFAULT_NORMALIZATION_CONFIG when not given.
         `max_cost_ratio` bounds how much worse a 2nd/3rd-place combo is
@@ -153,6 +162,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         self.position_assigner = position_assigner or BipartiteMatchingPositionAssigner()
         self.evaluator = evaluator or BalanceEvaluator()
         self.strategy = strategy or DEFAULT_STRATEGY
+        self.search_policy = search_policy or SEARCH_POLICY_REGISTRY.get(self.strategy.name, StableSearchPolicy)()
         self.feature_registry = feature_registry or DEFAULT_FEATURE_REGISTRY
         self.hard_constraints = hard_constraints or HardConstraintLayer()
         self.normalization_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
@@ -171,28 +181,35 @@ class BacktrackingSearchEngine(TeamSearchEngine):
                 f"Player count must be a positive multiple of {TEAM_SIZE}, got {len(players)}"
             )
 
+        search_start = time.monotonic()
         num_teams = len(players) // TEAM_SIZE
-        ordered = sorted(players, key=lambda p: p.final_rating, reverse=True)
+        ordered = self.search_policy.order_players(players)
         features = self.feature_registry.get_active_features(self.strategy, self.normalization_config)
         top = _TopKResults(k)
+        self._nodes_expanded = 0
 
         def evaluate_and_offer(teams: list[Team]) -> BalanceResult:
             raw = self.evaluator.evaluate_raw(teams, features)
             normalized = self.evaluator.normalize(raw, features)
             cost = self.evaluator.combine(normalized, self.strategy)
-            result = BalanceResult(teams=teams, cost=cost, cost_breakdown=raw, iterations=0)
+            result = BalanceResult(teams=teams, cost=cost, cost_breakdown=raw, iterations=self._nodes_expanded)
             if self.hard_constraints.is_feasible(teams, raw):
                 top.offer(result)
             return result
 
-        warm_start_result = evaluate_and_offer(self._build_warm_start_teams(ordered, num_teams, preferences))
+        custom_warm_start = self.search_policy.warm_start(ordered, num_teams)
+        warm_start_teams = (
+            self._build_teams(custom_warm_start, preferences)
+            if custom_warm_start is not None
+            else self._build_warm_start_teams(ordered, num_teams, preferences)
+        )
+        warm_start_result = evaluate_and_offer(warm_start_teams)
 
-        self._nodes_expanded = 0
         deadline = time.monotonic() + self.time_budget_seconds
         rosters: list[list[Player]] = [[] for _ in range(num_teams)]
         self._dfs(ordered, 0, rosters, num_teams, preferences, evaluate_and_offer, deadline)
 
-        results = top.results()
+        results = self.search_policy.order_team_candidates(top.results())
         if not results:
             # Only reachable when HardConstraintConfig has been tightened
             # so strictly that nothing explored satisfies it - guarantee
@@ -209,6 +226,14 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         for result in results:
             normalized = self.evaluator.normalize(result.cost_breakdown, features)
             result.contributions = self.evaluator.explain(result.cost_breakdown, normalized, self.strategy)
+
+        # Post-call read-only stats for callers building an ExecutionContext
+        # (see app/balance/execution_context.py) - set every call, not
+        # accumulated, so they always describe only the most recent search.
+        self.last_nodes_expanded = self._nodes_expanded
+        self.last_elapsed_seconds = time.monotonic() - search_start
+        self.last_node_budget_hit = self._nodes_expanded >= self.max_nodes
+        self.last_time_budget_hit = time.monotonic() > deadline
         return results
 
     def _build_teams(
@@ -254,6 +279,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         candidate_team_indices = [i for i in range(opened_count) if len(rosters[i]) < TEAM_SIZE]
         if opened_count < num_teams:
             candidate_team_indices.append(opened_count)
+        candidate_team_indices = self.search_policy.branch_priority(player, candidate_team_indices, rosters)
 
         for team_index in candidate_team_indices:
             if self._nodes_expanded >= self.max_nodes or time.monotonic() > deadline:

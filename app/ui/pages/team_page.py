@@ -63,24 +63,24 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
     if st.button("팀 생성", disabled=len(selected) == 0):
         signups = [PlayerSignup(player=p, match_override=overrides.get(p.id)) for p in selected]
         try:
-            results = team_service.generate_top_teams(signups, k=3)
+            context = team_service.run(signups, k=3)
         except InvalidPlayerCountError as exc:
             st.error(str(exc))
         else:
-            # Snapshot signups/strategy alongside results - the strategy
-            # dropdown or player selection could change on a later rerun
-            # (e.g. right before saving), and the decision log must
-            # reflect what actually PRODUCED these results, not whatever
-            # the widgets happen to show at save time.
-            st.session_state["last_balance_results"] = results
-            st.session_state["last_signups"] = signups
-            st.session_state["last_strategy_key"] = strategy_key
+            # Snapshot the whole ExecutionContext - the strategy dropdown
+            # or player selection could change on a later rerun (e.g.
+            # right before saving), and the decision log must reflect
+            # what actually PRODUCED these results, not whatever the
+            # widgets happen to show at save time. One object instead of
+            # three parallel session_state keys.
+            st.session_state["last_execution_context"] = context
 
-    results = st.session_state.get("last_balance_results")
-    if not results:
+    context = st.session_state.get("last_execution_context")
+    if context is None:
         return
 
-    used_strategy_key = st.session_state.get("last_strategy_key", strategy_key)
+    results = context.runtime.candidate_teams
+    used_strategy_key = context.input.strategy.name
     st.caption(f"밸런싱 전략: {STRATEGY_LABELS[used_strategy_key]} · 상위 {len(results)}개 조합")
 
     labels = [f"조합 {i + 1}위 (cost {r.cost:.1f})" for i, r in enumerate(results)]
@@ -104,15 +104,8 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             st.error(str(exc))
         else:
             st.success(f"'{save_label}' 조합을 저장했습니다.")
-            signups = st.session_state.get("last_signups", [])
             try:
-                team_service.log_decision(
-                    signups,
-                    used_strategy_key,
-                    results,
-                    chosen_rank=chosen_rank + 1,
-                    reason=save_reason or None,
-                )
+                team_service.log_decision(context, chosen_rank=chosen_rank + 1, reason=save_reason or None)
             except Exception:
                 # 팀 저장은 이미 커밋됐으므로 실패해도 롤백하지 않는다 - Decision
                 # Log는 향후 학습용 부가 기록일 뿐, 팀 저장 자체의 성공 여부와는

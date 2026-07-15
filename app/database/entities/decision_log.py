@@ -31,3 +31,15 @@ class DecisionLogEntity(Base):
     chosen_rank: Mapped[int]
     chosen_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     reason: Mapped[Optional[str]] = mapped_column(nullable=True)
+
+    # Added for the v1.0 ExecutionContext/reproducibility work - all
+    # nullable since rows written before this migration have none of
+    # these (see scripts/migrate_2026_v1_schema.py and
+    # DecisionLogRepository._to_domain()'s None-coalescing).
+    execution_id: Mapped[Optional[str]] = mapped_column(nullable=True)
+    search_policy_name: Mapped[Optional[str]] = mapped_column(nullable=True)
+    player_snapshot: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    search_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    version_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    execution_time_seconds: Mapped[Optional[float]] = mapped_column(nullable=True)
+    candidate_count: Mapped[Optional[int]] = mapped_column(nullable=True)

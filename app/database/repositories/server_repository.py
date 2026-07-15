@@ -10,6 +10,7 @@ from app.balance.config import (
     HardConstraintConfig,
     NormalizationConfig,
 )
+from app.config import settings
 from app.database.entities.server import ServerEntity
 from app.database.repositories.base import BaseRepository
 from app.models.server import Server
@@ -51,6 +52,7 @@ def _to_domain(entity: ServerEntity) -> Server:
         created_at=entity.created_at,
         normalization_config=_normalization_config_from_json(entity.normalization_config),
         hard_constraint_config=_hard_constraint_config_from_json(entity.hard_constraint_config),
+        current_season_label=entity.current_season_label or settings.current_season_label,
     )
 
 
@@ -78,6 +80,13 @@ class ServerRepository(BaseRepository[ServerEntity]):
         entity = self._get_entity(server_id)
         entity.normalization_config = dataclasses.asdict(normalization)
         entity.hard_constraint_config = dataclasses.asdict(hard_constraint)
+        self.session.commit()
+        self.session.refresh(entity)
+        return _to_domain(entity)
+
+    def update_season_label(self, server_id: int, label: str) -> Server:
+        entity = self._get_entity(server_id)
+        entity.current_season_label = label
         self.session.commit()
         self.session.refresh(entity)
         return _to_domain(entity)

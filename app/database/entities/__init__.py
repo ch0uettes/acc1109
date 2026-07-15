@@ -1,4 +1,5 @@
 from app.database.entities.decision_log import DecisionLogEntity
+from app.database.entities.internal_rating_change import InternalRatingChangeEntity
 from app.database.entities.match import MatchEntity, MatchPlayerEntity
 from app.database.entities.player import PlayerEntity
 from app.database.entities.rating_history import RatingHistoryEntity
@@ -12,6 +13,7 @@ from app.database.entities.vote import VoteEntity
 
 __all__ = [
     "DecisionLogEntity",
+    "InternalRatingChangeEntity",
     "MatchEntity",
     "MatchPlayerEntity",
     "PlayerEntity",

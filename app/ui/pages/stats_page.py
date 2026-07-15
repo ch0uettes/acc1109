@@ -52,8 +52,13 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             {
                 "시각": d.created_at,
                 "전략": STRATEGY_NAME_LABEL.get(d.strategy_name, d.strategy_name),
+                "탐색 정책": d.search_policy_name or "-",
                 "참가자 수": len(d.player_ids),
                 "AI 추천 개수": len(d.recommendations),
+                "탐색 노드 수": d.search_statistics.nodes_expanded if d.search_statistics else None,
+                "실행 시간(초)": (
+                    round(d.execution_time_seconds, 3) if d.execution_time_seconds is not None else None
+                ),
                 "선택된 순위": f"{d.chosen_rank}위" + ("" if d.chosen_rank == 1 else " (AI 1위 아님)"),
                 "사유": d.reason or "",
             }
