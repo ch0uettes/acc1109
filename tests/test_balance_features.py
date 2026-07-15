@@ -16,7 +16,7 @@ from app.balance.features import (
     TierDistributionFeature,
     build_balance_evaluator,
 )
-from app.balance.features.rating.modifiers import confidence_weighted_internal_rating
+from app.balance.features.learning.modifiers import confidence_weighted_internal_rating
 from app.balance.strategy import STRATEGY_REGISTRY, IBalanceStrategy
 from app.models.player import Player
 from app.models.team import Team, TeamSlot
@@ -367,9 +367,11 @@ def test_feature_registry_unregister():
 def test_feature_registry_by_category():
     registry = FeatureRegistry()
     registry.register(MeanBalanceFeature)
+    registry.register(OutlierPenaltyFeature)
     registry.register(InternalRatingFeature)
     registry.register(LaneBalanceFeature)
-    assert set(registry.by_category("rating")) == {"mean_balance", "internal_rating"}
+    assert set(registry.by_category("rating")) == {"mean_balance", "outlier_penalty"}
+    assert registry.by_category("learning") == ["internal_rating"]
     assert registry.by_category("lane") == ["lane_balance"]
 
 

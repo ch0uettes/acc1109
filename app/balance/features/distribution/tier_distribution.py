@@ -21,7 +21,7 @@ class TierDistributionFeature(IBalanceFeature):
     curve shape."""
 
     name = "tier_distribution"
-    category = "team"
+    category = "distribution"
     description = "티어 분포 유사도 계산"
     default_enabled = True
     default_weight = 0.20

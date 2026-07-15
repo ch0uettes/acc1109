@@ -59,21 +59,30 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
     selected = [options[label] for label in selected_labels]
 
     overrides = _render_match_overrides(selected)
+    top_n = st.slider("추천 조합 개수", min_value=3, max_value=5, value=3)
 
     if st.button("팀 생성", disabled=len(selected) == 0):
         signups = [PlayerSignup(player=p, match_override=overrides.get(p.id)) for p in selected]
         try:
-            results = team_service.generate_top_teams(signups, k=3)
+            results = team_service.generate_top_teams(signups, k=top_n)
         except InvalidPlayerCountError as exc:
             st.error(str(exc))
         else:
+            # Snapshot signups/strategy alongside results - the strategy
+            # dropdown or player selection could change on a later rerun
+            # (e.g. right before saving), and the decision log must
+            # reflect what actually PRODUCED these results, not whatever
+            # the widgets happen to show at save time.
             st.session_state["last_balance_results"] = results
+            st.session_state["last_signups"] = signups
+            st.session_state["last_strategy_key"] = strategy_key
 
     results = st.session_state.get("last_balance_results")
     if not results:
         return
 
-    st.caption(f"밸런싱 전략: {STRATEGY_LABELS[strategy_key]} · 상위 {len(results)}개 조합")
+    used_strategy_key = st.session_state.get("last_strategy_key", strategy_key)
+    st.caption(f"밸런싱 전략: {STRATEGY_LABELS[used_strategy_key]} · 상위 {len(results)}개 조합")
 
     labels = [f"조합 {i + 1}위 (cost {r.cost:.1f})" for i, r in enumerate(results)]
     tabs = st.tabs(labels)
@@ -86,13 +95,23 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
         return
 
     save_label = st.selectbox("저장할 조합 선택", labels)
+    save_reason = st.text_input("선택 사유 (선택) - AI 1위와 다른 조합을 고른 경우 특히 남겨두면 좋습니다", key="save_reason")
     if st.button("팀 저장"):
-        chosen = results[labels.index(save_label)]
+        chosen_rank = labels.index(save_label)
+        chosen = results[chosen_rank]
         try:
             team_service.save_generated_teams(chosen, actor.role)
         except AppError as exc:
             st.error(str(exc))
         else:
+            signups = st.session_state.get("last_signups", [])
+            team_service.log_decision(
+                signups,
+                used_strategy_key,
+                results,
+                chosen_rank=chosen_rank + 1,
+                reason=save_reason or None,
+            )
             st.success(f"'{save_label}' 조합을 저장했습니다.")
 
 

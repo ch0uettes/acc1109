@@ -27,7 +27,7 @@ class OutlierPenaltyFeature(IBalanceFeature):
     증가해야 한다"."""
 
     name = "outlier_penalty"
-    category = "team"
+    category = "rating"
     description = "가장 크게 벗어난 팀 하나의 절대 편차 (Max Absolute Deviation)"
     default_enabled = True
     default_weight = 0.27

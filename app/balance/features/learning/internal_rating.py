@@ -4,7 +4,7 @@ import statistics
 
 from app.balance.config import DEFAULT_NORMALIZATION_CONFIG, NormalizationConfig
 from app.balance.features.base import FeaturePriority, IBalanceFeature
-from app.balance.features.rating.modifiers import confidence_weighted_internal_rating
+from app.balance.features.learning.modifiers import confidence_weighted_internal_rating
 from app.balance.features.scaling import LogisticNormalizer
 from app.models.team import Team
 
@@ -22,13 +22,13 @@ class InternalRatingFeature(IBalanceFeature):
     player's barely-tested Internal Rating counts for less than a
     veteran's well-established one. This is a Confidence *modifier*, not
     an independent ConfidenceFeature scoring its own points - see
-    app.balance.features.rating.modifiers for why.
+    app.balance.features.learning.modifiers for why.
 
     Normalized via the same Logistic shape as AverageRatingFeature, since
     it shares the same linear rating-point unit."""
 
     name = "internal_rating"
-    category = "rating"
+    category = "learning"
     description = "내전 전용 Internal Rating 격차 계산 (Confidence로 보정)"
     default_enabled = True
     default_weight = 0.15

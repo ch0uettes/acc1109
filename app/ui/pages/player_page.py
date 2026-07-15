@@ -9,6 +9,7 @@ from app.models.server_membership import ServerMembership
 from app.rating.official import master_stage_from
 from app.rating.resolver import TierSnapshot
 from app.services.player_service import PlayerService
+from app.services.rbac import Permission, has_permission
 from app.utils.exceptions import PermissionDeniedError
 from app.utils.enums import Division, Position, RatingSource, Tier
 
@@ -305,6 +306,18 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
             key="edit_peak_lp",
         )
 
+        can_override_rating = has_permission(actor.role, Permission.SET_SEED_RATING)
+        st.caption(
+            "Internal Rating Override (관리자 전용) - 내전 전용 실력 지표를 직접 보정합니다. "
+            "평소에는 경기 결과로 자동 갱신되므로, 명백히 잘못됐다고 판단될 때만 사용하세요."
+        )
+        new_internal_rating = st.number_input(
+            "Internal Rating 직접 수정",
+            value=float(target.internal_rating),
+            disabled=not can_override_rating,
+            key="edit_internal_rating_override",
+        )
+
         is_seed = new_tier == Tier.UNRANKED
         new_seed_tier = None
         new_seed_division = Division.III
@@ -376,6 +389,9 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
                         }
                     )
                     service.update_player(updated, actor_role=actor.role)
+
+                if can_override_rating and new_internal_rating != target.internal_rating:
+                    service.override_internal_rating(target.id, float(new_internal_rating), actor.role)
             except PermissionDeniedError as exc:
                 st.error(f"권한이 없습니다: {exc}")
             else:

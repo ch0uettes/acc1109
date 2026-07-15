@@ -130,6 +130,17 @@ def test_player_role_cannot_set_seed_rating(session):
         service.set_seed_rating(created.id, Tier.GOLD, changed_by="누군가", actor_role=Role.PLAYER)
 
 
+def test_player_role_cannot_override_internal_rating(session):
+    service = PlayerService(session, server_id=1)
+    created = service.create_player(_player("대상"), actor_role=Role.SERVER_ADMIN)
+
+    with pytest.raises(PermissionDeniedError):
+        service.override_internal_rating(created.id, 999.0, actor_role=Role.PLAYER)
+
+    updated = service.override_internal_rating(created.id, 999.0, actor_role=Role.SERVER_ADMIN)
+    assert updated.internal_rating == 999.0
+
+
 def test_player_role_cannot_record_match(session):
     player_service = PlayerService(session, server_id=1)
     players = [

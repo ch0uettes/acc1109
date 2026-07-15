@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from app.balance.features.base import FeaturePriority, IBalanceFeature
+from app.balance.features.distribution import TierDistributionFeature
 from app.balance.features.evaluator import BalanceEvaluator
 from app.balance.features.lane import LaneBalanceFeature, RolePenaltyFeature
+from app.balance.features.learning import InternalRatingFeature
 from app.balance.features.metadata import FeatureMetadata
 from app.balance.features.performance import RecentFormFeature
-from app.balance.features.rating import InternalRatingFeature, MeanBalanceFeature
+from app.balance.features.rating import MeanBalanceFeature, OutlierPenaltyFeature, TeamVarianceFeature
 from app.balance.features.registry import (
     DEFAULT_FEATURE_REGISTRY,
     FEATURE_REGISTRY,
@@ -14,12 +16,7 @@ from app.balance.features.registry import (
     default_balance_evaluator,
 )
 from app.balance.features.synergy import SynergyFeature
-from app.balance.features.team import (
-    OutlierPenaltyFeature,
-    PenaltyFeature,
-    TeamVarianceFeature,
-    TierDistributionFeature,
-)
+from app.balance.features.team import PenaltyFeature
 
 # Re-exports every public name from this package's internals, so
 # `from app.balance.features import X` keeps working unchanged everywhere

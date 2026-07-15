@@ -144,6 +144,20 @@ class PlayerService:
         self._log_seed_rating_change(player_id, old_seed_rating, new_seed_rating, changed_by, reason)
         return saved
 
+    def override_internal_rating(self, player_id: int, new_internal_rating: float, actor_role: Role) -> Player:
+        """Manual admin override of internal_rating - the normal path is
+        earned automatically through match results (see
+        rating.updater.ExpectedPerformanceUpdateStrategy), never
+        operator-typed. This exists for correcting a clearly-wrong value
+        (e.g. a calibration bug, or a player who's obviously stronger/
+        weaker than their earned Internal Rating suggests) - same
+        permission tier as set_seed_rating() since both let an operator's
+        judgment override a normally-computed rating."""
+        require_permission(actor_role, Permission.SET_SEED_RATING)
+        player = self.repo.get(player_id)
+        updated = player.model_copy(update={"internal_rating": new_internal_rating})
+        return self.repo.update(updated)
+
     def _log_seed_rating_change(
         self,
         player_id: int,

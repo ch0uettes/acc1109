@@ -30,7 +30,7 @@ class TeamVarianceFeature(IBalanceFeature):
     unit swamping everything else after weighting."""
 
     name = "team_variance"
-    category = "team"
+    category = "rating"
     description = "팀 내부 안정성 (팀 간 평균 격차는 담당하지 않음)"
     default_enabled = True
     default_weight = 0.12

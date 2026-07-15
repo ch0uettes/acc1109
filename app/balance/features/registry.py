@@ -7,7 +7,9 @@ from app.balance.config import (
     NormalizationConfig,
 )
 from app.balance.features.base import IBalanceFeature
+from app.balance.features.distribution import DISTRIBUTION_FEATURES
 from app.balance.features.lane import LANE_FEATURES
+from app.balance.features.learning import LEARNING_FEATURES
 from app.balance.features.metadata import FeatureMetadata
 from app.balance.features.performance import PERFORMANCE_FEATURES
 from app.balance.features.rating import RATING_FEATURES
@@ -71,7 +73,15 @@ class FeatureRegistry:
 
 def _default_registry() -> FeatureRegistry:
     registry = FeatureRegistry()
-    for features_by_name in (RATING_FEATURES, LANE_FEATURES, TEAM_FEATURES, PERFORMANCE_FEATURES, SYNERGY_FEATURES):
+    for features_by_name in (
+        RATING_FEATURES,
+        LANE_FEATURES,
+        DISTRIBUTION_FEATURES,
+        LEARNING_FEATURES,
+        TEAM_FEATURES,
+        PERFORMANCE_FEATURES,
+        SYNERGY_FEATURES,
+    ):
         for feature_cls in features_by_name.values():
             registry.register(feature_cls)
     return registry
