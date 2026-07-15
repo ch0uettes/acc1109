@@ -59,12 +59,11 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
     selected = [options[label] for label in selected_labels]
 
     overrides = _render_match_overrides(selected)
-    top_n = st.slider("추천 조합 개수", min_value=3, max_value=5, value=3)
 
     if st.button("팀 생성", disabled=len(selected) == 0):
         signups = [PlayerSignup(player=p, match_override=overrides.get(p.id)) for p in selected]
         try:
-            results = team_service.generate_top_teams(signups, k=top_n)
+            results = team_service.generate_top_teams(signups, k=3)
         except InvalidPlayerCountError as exc:
             st.error(str(exc))
         else:
@@ -104,15 +103,22 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
         except AppError as exc:
             st.error(str(exc))
         else:
-            signups = st.session_state.get("last_signups", [])
-            team_service.log_decision(
-                signups,
-                used_strategy_key,
-                results,
-                chosen_rank=chosen_rank + 1,
-                reason=save_reason or None,
-            )
             st.success(f"'{save_label}' 조합을 저장했습니다.")
+            signups = st.session_state.get("last_signups", [])
+            try:
+                team_service.log_decision(
+                    signups,
+                    used_strategy_key,
+                    results,
+                    chosen_rank=chosen_rank + 1,
+                    reason=save_reason or None,
+                )
+            except Exception:
+                # 팀 저장은 이미 커밋됐으므로 실패해도 롤백하지 않는다 - Decision
+                # Log는 향후 학습용 부가 기록일 뿐, 팀 저장 자체의 성공 여부와는
+                # 별개다. 사용자에게는 팀 저장 성공만 보이면 충분하고, 기록 실패는
+                # 조용히 넘어간다 (매치 진행에 지장을 주면 안 되므로).
+                pass
 
 
 def _render_combo(result) -> None:
