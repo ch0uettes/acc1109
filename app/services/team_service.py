@@ -9,6 +9,8 @@ from app.balance.result import BalanceResult
 from app.balance.strategy import IBalanceStrategy
 from app.database.repositories.team_repository import TeamRepository
 from app.position.signup import PlayerSignup
+from app.services.rbac import Permission, require_permission
+from app.utils.enums import Role
 
 
 class TeamService:
@@ -32,5 +34,10 @@ class TeamService:
     def generate_top_teams(self, signups: list[PlayerSignup], k: int = 3) -> list[BalanceResult]:
         return self.balancer.generate_top_teams(signups, k=k)
 
-    def save_generated_teams(self, result: BalanceResult) -> list[int]:
+    def save_generated_teams(self, result: BalanceResult, actor_role: Role) -> list[int]:
+        """Unlike generate_teams()/generate_top_teams() (pure computation,
+        no DB write), this persists rosters - same permission tier as
+        MatchService.record_match(), since saving a team split is part of
+        setting up a match, not a base-level action every Player gets."""
+        require_permission(actor_role, Permission.CREATE_MATCH)
         return self.repo.save_generated_teams(result.teams)

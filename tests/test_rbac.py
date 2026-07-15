@@ -7,10 +7,12 @@ from sqlalchemy.orm import sessionmaker
 from app.database.base import Base
 from app.models.player import Player
 from app.models.team import Team
+from app.balance.result import BalanceResult
 from app.services.match_service import MatchService
 from app.services.player_service import PlayerService
 from app.services.rbac import Permission, has_permission
 from app.services.server_service import ServerService
+from app.services.team_service import TeamService
 from app.utils.enums import Division, Position, Role, Tier
 from app.utils.exceptions import PermissionDeniedError
 
@@ -138,3 +140,21 @@ def test_player_role_cannot_record_match(session):
 
     with pytest.raises(PermissionDeniedError):
         match_service.record_match(teams, winning_team_index=0, actor_role=Role.PLAYER)
+
+
+def test_player_role_cannot_save_generated_teams(session):
+    # save_generated_teams() writes rosters to the DB - same permission
+    # tier as record_match(), not a base-level action every Player gets.
+    player_service = PlayerService(session, server_id=1)
+    players = [
+        player_service.create_player(_player(f"p{i}"), actor_role=Role.SERVER_ADMIN) for i in range(10)
+    ]
+    teams = [Team(index=0, players=players[:5]), Team(index=1, players=players[5:])]
+    result = BalanceResult(teams=teams, cost=0.0)
+    team_service = TeamService(session, server_id=1)
+
+    with pytest.raises(PermissionDeniedError):
+        team_service.save_generated_teams(result, actor_role=Role.PLAYER)
+
+    saved_ids = team_service.save_generated_teams(result, actor_role=Role.SERVER_ADMIN)
+    assert len(saved_ids) == 2

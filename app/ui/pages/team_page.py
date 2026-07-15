@@ -9,10 +9,11 @@ from app.models.server_membership import ServerMembership
 from app.position.schemas import RolePreference
 from app.position.signup import PlayerSignup
 from app.services.player_service import PlayerService
+from app.services.rbac import Permission, has_permission
 from app.services.server_service import ServerService
 from app.services.team_service import TeamService
 from app.utils.enums import Position
-from app.utils.exceptions import InvalidPlayerCountError
+from app.utils.exceptions import AppError, InvalidPlayerCountError
 
 NO_SUB_ROLE = "없음"
 
@@ -80,11 +81,19 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
         with tab:
             _render_combo(result)
 
+    if not has_permission(actor.role, Permission.CREATE_MATCH):
+        st.caption("팀 저장은 Server Admin 이상만 가능합니다.")
+        return
+
     save_label = st.selectbox("저장할 조합 선택", labels)
     if st.button("팀 저장"):
         chosen = results[labels.index(save_label)]
-        team_service.save_generated_teams(chosen)
-        st.success(f"'{save_label}' 조합을 저장했습니다.")
+        try:
+            team_service.save_generated_teams(chosen, actor.role)
+        except AppError as exc:
+            st.error(str(exc))
+        else:
+            st.success(f"'{save_label}' 조합을 저장했습니다.")
 
 
 def _render_combo(result) -> None:
