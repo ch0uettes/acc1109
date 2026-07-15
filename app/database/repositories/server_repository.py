@@ -53,6 +53,7 @@ def _to_domain(entity: ServerEntity) -> Server:
         normalization_config=_normalization_config_from_json(entity.normalization_config),
         hard_constraint_config=_hard_constraint_config_from_json(entity.hard_constraint_config),
         current_season_label=entity.current_season_label or settings.current_season_label,
+        constraint_priorities=entity.constraint_priorities or {},
     )
 
 
@@ -87,6 +88,13 @@ class ServerRepository(BaseRepository[ServerEntity]):
     def update_season_label(self, server_id: int, label: str) -> Server:
         entity = self._get_entity(server_id)
         entity.current_season_label = label
+        self.session.commit()
+        self.session.refresh(entity)
+        return _to_domain(entity)
+
+    def update_constraint_priorities(self, server_id: int, priorities: dict[str, int]) -> Server:
+        entity = self._get_entity(server_id)
+        entity.constraint_priorities = priorities
         self.session.commit()
         self.session.refresh(entity)
         return _to_domain(entity)

@@ -38,6 +38,7 @@ from app.config import settings  # noqa: E402
 # column type, so TEXT round-trips correctly on both SQLite and Postgres.
 NEW_COLUMNS: list[tuple[str, str, str]] = [
     ("servers", "current_season_label", "TEXT"),
+    ("servers", "constraint_priorities", "TEXT"),
     ("decision_logs", "execution_id", "TEXT"),
     ("decision_logs", "search_policy_name", "TEXT"),
     ("decision_logs", "player_snapshot", "TEXT"),

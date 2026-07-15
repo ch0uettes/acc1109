@@ -27,3 +27,9 @@ class ServerEntity(Base):
     # Per-server because different Discord servers/leagues can be on
     # different splits, unlike the old single global env var.
     current_season_label: Mapped[Optional[str]] = mapped_column(nullable=True, default=None)
+    # NULL = every Constraint plugin uses its own default_priority (see
+    # app/balance/constraint_engine) - name -> priority override, only set
+    # once an Owner/Server Admin saves one via the 서버 관리 page. No UI
+    # form ships yet (backend-ready, matching SearchPolicy's unexercised
+    # hooks) - this column exists so a future one needs no schema change.
+    constraint_priorities: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)

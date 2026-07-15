@@ -6,9 +6,11 @@ import uuid
 from datetime import datetime
 
 from app.balance.config import DEFAULT_HARD_CONSTRAINT_CONFIG, DEFAULT_NORMALIZATION_CONFIG, NormalizationConfig
+from app.balance.constraint_engine.result import ConstraintStatus
 from app.balance.constraints import HardConstraintLayer
 from app.balance.execution_context import (
     ConstraintResult,
+    ConstraintStatistics,
     ExecutionContext,
     InputContext,
     RuntimeContext,
@@ -82,7 +84,7 @@ class TeamBalancer:
         return self.run(signups, k=k).runtime.candidate_teams
 
     def run(self, signups: list[PlayerSignup], k: int = 3) -> ExecutionContext:
-        players, preferences = self._resolve(signups)
+        players, preferences, override_player_ids = self._resolve(signups)
 
         strategy = getattr(self.search_engine, "strategy", self.strategy)
         search_policy: SearchPolicy = getattr(
@@ -115,16 +117,38 @@ class TeamBalancer:
         context = ExecutionContext(input=input_context)
 
         wall_clock_start = time.monotonic()
-        candidate_teams = self.search_engine.search_top_k(players, preferences, k=k)
+        candidate_teams = self.search_engine.search_top_k(
+            players, preferences, k=k, override_player_ids=override_player_ids
+        )
         wall_clock_elapsed = time.monotonic() - wall_clock_start
 
+        # Real per-candidate Constraint Engine results if the search engine
+        # exposed them (BacktrackingSearchEngine always does - see
+        # last_constraint_results); falls back to a fresh HardConstraintLayer
+        # check only for a fully custom TeamSearchEngine that doesn't. This
+        # naturally covers whatever search_top_k() actually returned,
+        # warm-start fallback included - a Hard-violating fallback result
+        # is visible here, not silently treated as compliant.
+        leaf_results_per_candidate = getattr(self.search_engine, "last_constraint_results", None)
         constraint_results = [
             ConstraintResult(
                 candidate_index=index,
-                feasible=self.hard_constraints.is_feasible(result.teams, result.cost_breakdown),
+                feasible=(
+                    self.hard_constraints.is_feasible(result.teams, result.cost_breakdown)
+                    and not any(r.status == ConstraintStatus.FAIL for r in leaf_results)
+                ),
+                violations=[r.reason for r in leaf_results if r.status == ConstraintStatus.FAIL and r.reason],
             )
-            for index, result in enumerate(candidate_teams)
+            for index, (result, leaf_results) in enumerate(
+                zip(
+                    candidate_teams,
+                    leaf_results_per_candidate or [[] for _ in candidate_teams],
+                )
+            )
         ]
+        constraint_result_details = {
+            index: leaf_results for index, leaf_results in enumerate(leaf_results_per_candidate or [])
+        }
         feature_snapshots = {index: result.contributions for index, result in enumerate(candidate_teams)}
         search_statistics = SearchStatistics(
             nodes_expanded=getattr(self.search_engine, "last_nodes_expanded", 0),
@@ -133,11 +157,16 @@ class TeamBalancer:
             node_budget_hit=getattr(self.search_engine, "last_node_budget_hit", False),
             time_budget_hit=getattr(self.search_engine, "last_time_budget_hit", False),
         )
+        constraint_statistics: ConstraintStatistics | None = getattr(
+            self.search_engine, "last_constraint_statistics", None
+        )
         runtime_context = RuntimeContext(
             candidate_teams=candidate_teams,
             constraint_results=constraint_results,
+            constraint_result_details=constraint_result_details,
             feature_snapshots=feature_snapshots,
             search_statistics=search_statistics,
+            constraint_statistics=constraint_statistics,
             finished_at=datetime.utcnow(),
         )
         context = dataclasses.replace(context, runtime=runtime_context)
@@ -149,4 +178,13 @@ class TeamBalancer:
             signup.player.id: self.preference_manager.resolve(signup.player, signup.match_override)
             for signup in signups
         }
-        return players, preferences
+        # Player ids with an explicit this-match override, as opposed to
+        # just their stored profile main/sub role - RolePreferenceManager
+        # already collapsed that distinction into `preferences` above, so
+        # this has to be captured separately for FixedRoleConstraint (see
+        # app/balance/constraint_engine/plugins/role.py) to know which
+        # players actually need their position hard-enforced.
+        override_player_ids = frozenset(
+            signup.player.id for signup in signups if signup.match_override is not None
+        )
+        return players, preferences, override_player_ids

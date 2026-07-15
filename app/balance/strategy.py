@@ -30,6 +30,18 @@ class IBalanceStrategy(ABC):
         config = self.feature_config().get(feature_name)
         return config.weight if config is not None else 0.0
 
+    def constraint_priority_overrides(self) -> dict[str, int]:
+        """Optional per-Strategy override of a Constraint plugin's
+        default_priority (see app/balance/constraint_engine) - e.g. a
+        future CompetitiveStrategy might return {"lane_gap": 90} to check
+        that constraint earliest under Competitive mode specifically.
+        Non-abstract with an empty default so none of today's concrete
+        Strategies need to implement anything; ConstraintExecutor's
+        priority resolution checks this before falling back to a
+        Server's saved override, then finally the plugin's own
+        default_priority."""
+        return {}
+
 
 class CompetitiveStrategy(IBalanceStrategy):
     """대회/스크림/경쟁형 내전 - 라인전 공정성을 최우선으로 평가.

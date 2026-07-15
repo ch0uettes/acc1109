@@ -5,6 +5,9 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 from app.balance.config import DEFAULT_NORMALIZATION_CONFIG, NormalizationConfig
+from app.balance.constraint_engine.executor import ConstraintExecutor
+from app.balance.constraint_engine.registry import DEFAULT_CONSTRAINT_REGISTRY, ConstraintRegistry
+from app.balance.constraint_engine.result import ConstraintStatus
 from app.balance.constraints import HardConstraintLayer
 from app.balance.features import DEFAULT_FEATURE_REGISTRY, BalanceEvaluator, FeatureRegistry
 from app.balance.result import BalanceResult
@@ -33,11 +36,19 @@ class TeamSearchEngine(ABC):
         ...
 
     def search_top_k(
-        self, players: list[Player], preferences: dict[int, RolePreference], k: int = 3
+        self,
+        players: list[Player],
+        preferences: dict[int, RolePreference],
+        k: int = 3,
+        override_player_ids: frozenset = frozenset(),
     ) -> list[BalanceResult]:
         """Default fallback for engines that don't natively explore
         multiple distinct candidates: just wraps search() as a
-        single-item list. BacktrackingSearchEngine overrides this with a
+        single-item list. `override_player_ids` (player ids whose
+        RolePreference came from an explicit this-match override, not
+        their stored profile - see ConstraintContext.override_player_ids)
+        is accepted for interface parity but ignored here since search()
+        alone can't enforce it; BacktrackingSearchEngine overrides this with a
         real top-k implementation; a future Beam Search engine, whose
         whole approach is "keep a beam of candidates," would too."""
         return [self.search(players, preferences)]
@@ -138,6 +149,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         feature_registry: Optional[FeatureRegistry] = None,
         hard_constraints: Optional[HardConstraintLayer] = None,
         normalization_config: Optional[NormalizationConfig] = None,
+        constraint_registry: Optional[ConstraintRegistry] = None,
         max_nodes: int = 20_000,
         time_budget_seconds: float = 5.0,
         max_cost_ratio: float = 1.25,
@@ -166,6 +178,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         self.feature_registry = feature_registry or DEFAULT_FEATURE_REGISTRY
         self.hard_constraints = hard_constraints or HardConstraintLayer()
         self.normalization_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
+        self.constraint_registry = constraint_registry or DEFAULT_CONSTRAINT_REGISTRY
         self.max_nodes = max_nodes
         self.time_budget_seconds = time_budget_seconds
         self.max_cost_ratio = max_cost_ratio
@@ -174,7 +187,11 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         return self.search_top_k(players, preferences, k=1)[0]
 
     def search_top_k(
-        self, players: list[Player], preferences: dict[int, RolePreference], k: int = 3
+        self,
+        players: list[Player],
+        preferences: dict[int, RolePreference],
+        k: int = 3,
+        override_player_ids: frozenset = frozenset(),
     ) -> list[BalanceResult]:
         if len(players) == 0 or len(players) % TEAM_SIZE != 0:
             raise InvalidPlayerCountError(
@@ -187,13 +204,23 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         features = self.feature_registry.get_active_features(self.strategy, self.normalization_config)
         top = _TopKResults(k)
         self._nodes_expanded = 0
+        # Fresh per call (mirrors _TopKResults(k)) - resolves each tier's
+        # active plugin list ONCE here, not per DFS node, and its
+        # statistics only ever describe this one search.
+        self.constraint_executor = ConstraintExecutor(
+            registry=self.constraint_registry, strategy=self.strategy, search_policy=self.search_policy,
+        )
 
         def evaluate_and_offer(teams: list[Team]) -> BalanceResult:
             raw = self.evaluator.evaluate_raw(teams, features)
             normalized = self.evaluator.normalize(raw, features)
             cost = self.evaluator.combine(normalized, self.strategy)
             result = BalanceResult(teams=teams, cost=cost, cost_breakdown=raw, iterations=self._nodes_expanded)
-            if self.hard_constraints.is_feasible(teams, raw):
+            leaf_results = self.constraint_executor.evaluate_leaf(
+                teams, players, preferences, override_player_ids
+            )
+            leaf_ok = not any(r.status == ConstraintStatus.FAIL for r in leaf_results)
+            if leaf_ok and self.hard_constraints.is_feasible(teams, raw):
                 top.offer(result)
             return result
 
@@ -227,6 +254,18 @@ class BacktrackingSearchEngine(TeamSearchEngine):
             normalized = self.evaluator.normalize(result.cost_breakdown, features)
             result.contributions = self.evaluator.explain(result.cost_breakdown, normalized, self.strategy)
 
+        # Real per-candidate Constraint Engine results, re-derived for the
+        # handful of results actually returned (same "not thousands of
+        # times over" reasoning as explain() above) - includes whatever
+        # search_top_k() actually returned, warm-start fallback included,
+        # so a Hard-violating fallback result is visible rather than
+        # silently treated as compliant (see BacktrackingSearchEngine's
+        # class docstring on the warm-start guarantee).
+        self.last_constraint_results = [
+            self.constraint_executor.evaluate_leaf(result.teams, players, preferences, override_player_ids)
+            for result in results
+        ]
+
         # Post-call read-only stats for callers building an ExecutionContext
         # (see app/balance/execution_context.py) - set every call, not
         # accumulated, so they always describe only the most recent search.
@@ -234,6 +273,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         self.last_elapsed_seconds = time.monotonic() - search_start
         self.last_node_budget_hit = self._nodes_expanded >= self.max_nodes
         self.last_time_budget_hit = time.monotonic() > deadline
+        self.last_constraint_statistics = self.constraint_executor.statistics()
         return results
 
     def _build_teams(
@@ -279,6 +319,37 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         candidate_team_indices = [i for i in range(opened_count) if len(rosters[i]) < TEAM_SIZE]
         if opened_count < num_teams:
             candidate_team_indices.append(opened_count)
+
+        # Partial-Hard pruning (Constraint Engine) - drops any branch a
+        # monotonic PartialHardConstraint rejects before recursing into it
+        # at all. No-op with the default registry (zero concrete
+        # PartialHardConstraint plugins ship this pass - see
+        # app/balance/constraint_engine), so this can't change behavior
+        # for any Strategy shipped today.
+        candidate_team_indices = [
+            team_index
+            for team_index in candidate_team_indices
+            if not any(
+                result.prune
+                for result in self.constraint_executor.evaluate_partial(
+                    rosters, team_index, player, players, preferences
+                )
+            )
+        ]
+
+        # Search Guidance (Constraint Engine) - reorders survivors by
+        # ascending combined Soft+Preference penalty/heuristic (lowest
+        # explored first). No-op with the default registry (zero concrete
+        # Soft/Preference plugins ship this pass), and `sorted()` is
+        # stable, so an empty registry reproduces today's exact order.
+        guidance = self.constraint_executor.compute_search_guidance(
+            rosters, candidate_team_indices, player, players, preferences
+        )
+        if guidance:
+            candidate_team_indices = sorted(
+                candidate_team_indices, key=lambda i: guidance[i].total_score
+            )
+
         candidate_team_indices = self.search_policy.branch_priority(player, candidate_team_indices, rosters)
 
         for team_index in candidate_team_indices:

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from app.balance.config import HardConstraintConfig, NormalizationConfig
+from app.balance.constraint_engine.result import ConstraintResult as ConstraintEvaluationResult
 from app.balance.result import BalanceResult, FeatureContribution
 from app.balance.search_policy import SearchPolicy
 from app.balance.strategy import IBalanceStrategy
@@ -66,12 +67,29 @@ class ConstraintResult:
 
 
 @dataclass(frozen=True)
+class ConstraintStatistics:
+    """Snapshot of everything the new Constraint Engine
+    (app/balance/constraint_engine) accumulated during one search -
+    see ConstraintExecutor.statistics(). Sits alongside SearchStatistics,
+    same "read-only attribute set on the engine, folded in by
+    TeamBalancer.run() after search_top_k() returns" pattern."""
+
+    hard_fail_count: int
+    soft_penalty_total: float
+    preference_penalty_total: float
+    pruned_branch_count: int
+    execution_time_seconds: float
+
+
+@dataclass(frozen=True)
 class ExplainData:
-    """Human/UI-facing summary derived FROM feature_snapshots (never
-    recomputed) - top contributing Features per candidate, in a shape
-    ready for display rather than raw per-Feature numbers."""
+    """Human/UI-facing summary derived FROM feature_snapshots/
+    constraint_result_details (never recomputed) - top contributing
+    Features per candidate and the full per-candidate Constraint Engine
+    breakdown, in a shape ready for display rather than raw numbers."""
 
     top_contributors: dict[int, list[FeatureContribution]]  # candidate_index -> top-N by |contribution|
+    constraint_summary: dict[int, list[ConstraintEvaluationResult]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -91,8 +109,15 @@ class InputContext:
 class RuntimeContext:
     candidate_teams: list[BalanceResult] = field(default_factory=list)
     constraint_results: list[ConstraintResult] = field(default_factory=list)
+    # Raw per-candidate Constraint Engine output (one list per candidate,
+    # one ConstraintResult per active Leaf-Hard plugin) - the richer
+    # sibling of constraint_results above (which only summarizes
+    # feasible/violations). ExplainableAI reads this directly into
+    # ExplainData.constraint_summary rather than recomputing anything.
+    constraint_result_details: dict[int, list[ConstraintEvaluationResult]] = field(default_factory=dict)
     feature_snapshots: dict[int, list[FeatureContribution]] = field(default_factory=dict)
     search_statistics: Optional[SearchStatistics] = None
+    constraint_statistics: Optional[ConstraintStatistics] = None
     finished_at: Optional[datetime] = None
 
 

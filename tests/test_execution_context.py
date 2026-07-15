@@ -88,6 +88,30 @@ def test_feature_snapshots_match_each_candidates_contributions():
         assert context.runtime.feature_snapshots[index] == candidate.contributions
 
 
+def test_run_populates_constraint_statistics_and_results():
+    balancer = TeamBalancer(strategy=StableStrategy())
+    context = balancer.run(_signups(10), k=3)
+
+    assert context.runtime.constraint_statistics is not None
+    assert context.runtime.constraint_statistics.execution_time_seconds >= 0.0
+    assert len(context.runtime.constraint_results) == len(context.runtime.candidate_teams)
+    # Default registry (structural + FixedRole only, no override this run) -
+    # every candidate must be feasible with zero violations.
+    assert all(r.feasible for r in context.runtime.constraint_results)
+    assert all(r.violations == [] for r in context.runtime.constraint_results)
+
+
+def test_explain_data_carries_constraint_summary():
+    balancer = TeamBalancer(strategy=StableStrategy())
+    context = balancer.run(_signups(10), k=3)
+
+    assert context.result.explain_data is not None
+    summary = context.result.explain_data.constraint_summary
+    assert len(summary) == len(context.runtime.candidate_teams)
+    for results in summary.values():
+        assert all(r.status.value == "pass" for r in results)  # default registry, no overrides
+
+
 def test_different_strategies_produce_matching_search_policy_names():
     stable_context = TeamBalancer(strategy=StableStrategy()).run(_signups(10), k=1)
     competitive_context = TeamBalancer(strategy=CompetitiveStrategy()).run(_signups(10), k=1)

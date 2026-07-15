@@ -68,6 +68,33 @@ def test_player_season_snapshot_uses_the_servers_season_label(session):
     assert history[0].season == "2026-S1"
 
 
+def test_new_server_defaults_to_empty_constraint_priorities(session):
+    service = ServerService(session)
+    server = service.create_server("테스트 서버", owner_display_name="홍길동")
+
+    assert server.constraint_priorities == {}
+
+
+def test_owner_can_update_and_reload_constraint_priorities(session):
+    service = ServerService(session)
+    server = service.create_server("테스트 서버", owner_display_name="홍길동")
+
+    updated = service.update_constraint_priorities(server.id, "홍길동", {"fixed_role": 999})
+    assert updated.constraint_priorities == {"fixed_role": 999}
+
+    reloaded = service.get_server(server.id)
+    assert reloaded.constraint_priorities == {"fixed_role": 999}
+
+
+def test_non_owner_cannot_update_constraint_priorities(session):
+    service = ServerService(session)
+    server = service.create_server("테스트 서버", owner_display_name="홍길동")
+    service.add_player_member(server.id, "일반유저")
+
+    with pytest.raises(PermissionDeniedError):
+        service.update_constraint_priorities(server.id, "일반유저", {"fixed_role": 999})
+
+
 def test_player_season_snapshot_falls_back_to_settings_when_no_server_row(session):
     # A unit test that never calls ServerService.create_server() has no
     # Server row at all - PlayerService must still work, falling back to

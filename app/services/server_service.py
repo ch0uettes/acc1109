@@ -139,6 +139,19 @@ class ServerService:
         require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
         return self.server_repo.update_season_label(server_id, label)
 
+    def update_constraint_priorities(
+        self, server_id: int, actor_display_name: str, priorities: dict[str, int]
+    ) -> Server:
+        """Owner/Server Admin only - overrides Constraint plugin priorities
+        (name -> priority, see app/balance/constraint_engine) for this
+        server. Same permission tier as update_balance_config/
+        update_season_label. No UI form ships yet - callable directly for
+        now, same "backend-ready, UI deferred" idiom as SearchPolicy's
+        unexercised hooks."""
+        actor = self._require_member(server_id, actor_display_name)
+        require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
+        return self.server_repo.update_constraint_priorities(server_id, priorities)
+
     def _change_role(
         self, server_id: int, target: ServerMembership, new_role: Role, changed_by: str, reason: str | None
     ) -> ServerMembership:

@@ -37,7 +37,12 @@ class Server(BaseModel):
     Server explicitly overrides it, same NULL-in-DB/never-None-on-domain-
     object convention as the two config fields above. Purely a metadata
     label stamped onto PlayerSeasonRank snapshots - never a scoring
-    input."""
+    input.
+
+    `constraint_priorities` (name -> priority) overrides a Constraint
+    plugin's own default_priority (see app/balance/constraint_engine) -
+    defaults to an empty dict (every plugin uses its own default) rather
+    than None, same never-None convention. No UI edits this yet."""
 
     id: Optional[int] = None
     name: str
@@ -46,3 +51,4 @@ class Server(BaseModel):
     normalization_config: NormalizationConfig = Field(default=DEFAULT_NORMALIZATION_CONFIG)
     hard_constraint_config: HardConstraintConfig = Field(default=DEFAULT_HARD_CONSTRAINT_CONFIG)
     current_season_label: str = Field(default_factory=lambda: settings.current_season_label)
+    constraint_priorities: dict[str, int] = Field(default_factory=dict)
