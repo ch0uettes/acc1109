@@ -4,14 +4,20 @@ from types import MappingProxyType
 
 import pytest
 
+from app.balance.balancer import TeamBalancer
 from app.balance.constraint_engine.base import LeafHardConstraint, PartialHardConstraint, SoftConstraint
 from app.balance.constraint_engine.context import ConstraintContext
+from app.balance.constraint_engine.context_factory import ConstraintContextFactory
 from app.balance.constraint_engine.executor import ConstraintExecutor
 from app.balance.constraint_engine.registry import ConstraintRegistry
 from app.balance.constraint_engine.result import ConstraintPipeline, ConstraintResult, ConstraintStatus, ConstraintTier
+from app.balance.search_engine import BacktrackingSearchEngine
 from app.balance.strategy import StableStrategy
 from app.balance.search_policy import StableSearchPolicy
 from app.models.player import Player
+from app.models.team import Team, TeamSlot
+from app.position.preference_manager import RolePreferenceManager
+from app.position.signup import PlayerSignup
 from app.utils.enums import Position, Tier
 
 
@@ -180,3 +186,44 @@ def test_constraint_result_metadata_is_immutable():
     )
     with pytest.raises(TypeError):
         result.metadata["b"] = 2
+
+
+def test_context_factory_deep_copies_players_so_plugin_mutation_cant_leak_into_live_search():
+    live_player = _player(1, "live")
+    factory = ConstraintContextFactory()
+
+    partial_context = factory.create_partial_context(
+        rosters=[[live_player], []], team_index=0, player=live_player,
+        player_profiles=[live_player], role_preferences={}, strategy=StableStrategy(),
+        search_policy=StableSearchPolicy(),
+    )
+    partial_context.candidate_player.tier = Tier.MASTER
+    assert live_player.tier == Tier.GOLD  # the live object handed in is untouched
+
+    slot = TeamSlot(position=Position.MID, player=live_player, role_penalty=0.0, role_source="main")
+    live_team = Team(index=0, players=[live_player], slots=[slot])
+    leaf_context = factory.create_leaf_context(
+        teams=[live_team], player_profiles=[live_player], role_preferences={},
+        strategy=StableStrategy(), search_policy=StableSearchPolicy(),
+    )
+    leaf_context.teams[0].players.append(_player(2, "intruder"))
+    leaf_context.teams[0].slots[0].player.nickname = "tampered"
+    assert len(live_team.players) == 1  # the live Team's own roster is untouched
+    assert live_team.slots[0].player.nickname == "live1"  # the live Player is untouched
+
+
+def test_backtracking_search_engine_forwards_constraint_priorities_to_executor():
+    engine = BacktrackingSearchEngine(constraint_priorities={"fixed_role": 999})
+    players = [_player(i) for i in range(5)]
+    manager = RolePreferenceManager()
+    preferences = {p.id: manager.resolve(p) for p in players}
+    engine.search_top_k(players, preferences, k=1)
+    assert engine.constraint_executor._effective_priorities["fixed_role"] == 999
+
+
+def test_team_balancer_forwards_server_constraint_priorities_end_to_end():
+    players = [_player(i) for i in range(5)]
+    signups = [PlayerSignup(player=p) for p in players]
+    balancer = TeamBalancer(constraint_priorities={"fixed_role": 777})
+    balancer.run(signups, k=1)
+    assert balancer.search_engine.constraint_executor._effective_priorities["fixed_role"] == 777

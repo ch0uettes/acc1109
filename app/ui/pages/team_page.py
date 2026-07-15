@@ -51,6 +51,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
         strategy=STRATEGY_REGISTRY[strategy_key](),
         normalization_config=server.normalization_config if server else None,
         hard_constraints=HardConstraintLayer(server.hard_constraint_config) if server else None,
+        constraint_priorities=server.constraint_priorities if server else None,
     )
 
     players = player_service.list_players()
@@ -104,6 +105,12 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             st.error(str(exc))
         else:
             st.success(f"'{save_label}' 조합을 저장했습니다.")
+            # match_page.py's "경기 저장" tab starts from this exact key -
+            # without it, the chosen combo is persisted as rosters but the
+            # match-recording flow (record_match: winner/MVP/rating update)
+            # has no way to find it and always shows its "generate a team
+            # first" empty state.
+            st.session_state["last_balance_result"] = chosen
             try:
                 team_service.log_decision(context, chosen_rank=chosen_rank + 1, reason=save_reason or None)
             except Exception:

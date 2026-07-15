@@ -51,25 +51,30 @@ class TeamBalancer:
         strategy: IBalanceStrategy | None = None,
         normalization_config: NormalizationConfig | None = None,
         hard_constraints: HardConstraintLayer | None = None,
+        constraint_priorities: dict[str, int] | None = None,
         explainable_ai: ExplainableAI | None = None,
     ) -> None:
-        """`strategy`/`normalization_config`/`hard_constraints` only apply
-        when `search_engine` isn't supplied directly - they're forwarded
-        straight to BacktrackingSearchEngine's own default construction,
-        so TeamBalancer itself never touches Feature or evaluator
-        internals. `normalization_config`/`hard_constraints` are
-        typically a Server's saved override (see app/models/server.py).
-        Kept as this class's own attributes too (not just forwarded) so
-        run() can describe them in ExecutionContext even when a fully
-        custom `search_engine` is supplied and doesn't expose them the
-        same way BacktrackingSearchEngine does."""
+        """`strategy`/`normalization_config`/`hard_constraints`/
+        `constraint_priorities` only apply when `search_engine` isn't
+        supplied directly - they're forwarded straight to
+        BacktrackingSearchEngine's own default construction, so
+        TeamBalancer itself never touches Feature/evaluator/Constraint
+        Engine internals. `normalization_config`/`hard_constraints`/
+        `constraint_priorities` are typically a Server's saved override
+        (see app/models/server.py). Kept as this class's own attributes
+        too (not just forwarded) so run() can describe them in
+        ExecutionContext even when a fully custom `search_engine` is
+        supplied and doesn't expose them the same way
+        BacktrackingSearchEngine does."""
         self.strategy = strategy or DEFAULT_STRATEGY
         self.normalization_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
         self.hard_constraints = hard_constraints or HardConstraintLayer()
+        self.constraint_priorities = constraint_priorities or {}
         self.search_engine = search_engine or BacktrackingSearchEngine(
             strategy=self.strategy,
             normalization_config=self.normalization_config,
             hard_constraints=self.hard_constraints,
+            constraint_priorities=self.constraint_priorities,
         )
         self.preference_manager = preference_manager or RolePreferenceManager()
         self.explainable_ai = explainable_ai or ExplainableAI()

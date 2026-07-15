@@ -34,12 +34,16 @@ class TeamService:
         strategy: IBalanceStrategy | None = None,
         normalization_config: NormalizationConfig | None = None,
         hard_constraints: HardConstraintLayer | None = None,
+        constraint_priorities: dict[str, int] | None = None,
     ) -> None:
         self.server_id = server_id
         self.repo = TeamRepository(session, server_id)
         self.decision_log_repo = DecisionLogRepository(session, server_id)
         self.balancer = balancer or TeamBalancer(
-            strategy=strategy, normalization_config=normalization_config, hard_constraints=hard_constraints
+            strategy=strategy,
+            normalization_config=normalization_config,
+            hard_constraints=hard_constraints,
+            constraint_priorities=constraint_priorities,
         )
 
     def generate_teams(self, signups: list[PlayerSignup]) -> BalanceResult:

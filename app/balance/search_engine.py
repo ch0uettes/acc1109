@@ -150,6 +150,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         hard_constraints: Optional[HardConstraintLayer] = None,
         normalization_config: Optional[NormalizationConfig] = None,
         constraint_registry: Optional[ConstraintRegistry] = None,
+        constraint_priorities: Optional[dict[str, int]] = None,
         max_nodes: int = 20_000,
         time_budget_seconds: float = 5.0,
         max_cost_ratio: float = 1.25,
@@ -170,7 +171,11 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         drops it instead of showing a misleadingly bad "alternative" (see
         _filter_by_quality). `evaluator`/`feature_registry`/
         `hard_constraints` are only for tests/advanced callers who want to
-        swap a piece independently."""
+        swap a piece independently. `constraint_priorities` is typically a
+        Server's saved override (see app/models/server.py) - the Server
+        component of ConstraintExecutor's Strategy > Server > plugin-default
+        priority resolution; same "typically a Server override" role as
+        `normalization_config`/`hard_constraints` above."""
         self.position_assigner = position_assigner or BipartiteMatchingPositionAssigner()
         self.evaluator = evaluator or BalanceEvaluator()
         self.strategy = strategy or DEFAULT_STRATEGY
@@ -179,6 +184,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         self.hard_constraints = hard_constraints or HardConstraintLayer()
         self.normalization_config = normalization_config or DEFAULT_NORMALIZATION_CONFIG
         self.constraint_registry = constraint_registry or DEFAULT_CONSTRAINT_REGISTRY
+        self.constraint_priorities = constraint_priorities or {}
         self.max_nodes = max_nodes
         self.time_budget_seconds = time_budget_seconds
         self.max_cost_ratio = max_cost_ratio
@@ -209,6 +215,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         # statistics only ever describe this one search.
         self.constraint_executor = ConstraintExecutor(
             registry=self.constraint_registry, strategy=self.strategy, search_policy=self.search_policy,
+            constraint_priorities=self.constraint_priorities,
         )
 
         def evaluate_and_offer(teams: list[Team]) -> BalanceResult:
