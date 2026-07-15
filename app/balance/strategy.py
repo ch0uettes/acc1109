@@ -33,16 +33,16 @@ class IBalanceStrategy(ABC):
 
 class CompetitiveStrategy(IBalanceStrategy):
     """대회/스크림/경쟁형 내전 - 라인전 공정성을 최우선으로 평가.
-    inter_team_balance(팀 간 평균 분산)를 추가해 lane_balance만으로
-    못 잡는 "한 팀 전체가 유독 강한" 경우도 함께 억제한다."""
+    outlier_penalty(가장 튀는 팀 하나의 절대 편차)를 추가해 lane_balance
+    만으로 못 잡는 "한 팀 전체가 유독 강한" 경우도 함께 억제한다."""
 
     name = "competitive"
 
     def feature_config(self) -> dict[str, FeatureConfig]:
         return {
             "lane_balance": FeatureConfig(enabled=True, weight=0.30),
-            "average_rating": FeatureConfig(enabled=True, weight=0.20),
-            "inter_team_balance": FeatureConfig(enabled=True, weight=0.20),
+            "mean_balance": FeatureConfig(enabled=True, weight=0.20),
+            "outlier_penalty": FeatureConfig(enabled=True, weight=0.20),
             "internal_rating": FeatureConfig(enabled=True, weight=0.15),
             "tier_distribution": FeatureConfig(enabled=True, weight=0.08),
             "team_variance": FeatureConfig(enabled=True, weight=0.04),
@@ -59,8 +59,8 @@ class ComfortStrategy(IBalanceStrategy):
     def feature_config(self) -> dict[str, FeatureConfig]:
         return {
             "role_penalty": FeatureConfig(enabled=True, weight=0.32),
-            "average_rating": FeatureConfig(enabled=True, weight=0.18),
-            "inter_team_balance": FeatureConfig(enabled=True, weight=0.15),
+            "mean_balance": FeatureConfig(enabled=True, weight=0.18),
+            "outlier_penalty": FeatureConfig(enabled=True, weight=0.15),
             "internal_rating": FeatureConfig(enabled=True, weight=0.13),
             "lane_balance": FeatureConfig(enabled=True, weight=0.10),
             "team_variance": FeatureConfig(enabled=True, weight=0.08),
@@ -69,26 +69,31 @@ class ComfortStrategy(IBalanceStrategy):
 
 
 class StableStrategy(IBalanceStrategy):
-    """기본(Default) Strategy - 대부분의 일반 내전에 적합. 팀 간 평균
-    Rating 격차가 가장 근본적인 공정성 기준이므로 inter_team_balance/
-    average_rating이 항상 가장 높은 가중치를 갖는다 (둘 다 "팀 간"
-    격차를 다른 통계량으로 보는 항목 - inter_team_balance는 분산이라
-    팀 하나가 유독 튀는 경우를 강하게 잡아내고, average_rating은
-    표준편차라 전체적으로 고르게 퍼진 정도를 선형적으로 잡아낸다).
-    team_variance("한 팀 내부가 캐리 1명 + 약자 4명처럼 쏠리지 않는
-    것")는 그보다 훨씬 낮게 둔다 - 그렇지 않으면 비슷한 티어끼리 팀
-    내부적으로만 뭉쳐서 팀 간 평균 격차를 오히려 키우는 조합이
-    구조적으로 유리해질 수 있다 (team_variance는 "팀 간 평균이 비슷할
-    때 그중 더 나은 조합을 고르는" 보조 기준이어야 한다)."""
+    """기본(Default) Strategy - 대부분의 일반 내전에 적합. 세 Feature가
+    서로 다른 책임으로 명확히 분리되어 있다:
+
+    - mean_balance: 모든 팀 평균이 전체 평균을 중심으로 얼마나 고르게
+      분포하는가 (전체적인 평균 균형).
+    - outlier_penalty: 가장 튀는 팀 "하나"가 전체 평균에서 얼마나
+      벗어났는가 (극단적인 팀 생성 방지) - mean_balance와 달리 다른
+      팀들이 아무리 고르게 뭉쳐 있어도 이 팀 하나가 튀면 강하게
+      페널티를 받는다.
+    - team_variance: 각 팀 "내부" 티어가 얼마나 들쭉날쭉한가 (팀 내부
+      안정성) - 팀 간 평균 격차는 전혀 담당하지 않는다.
+
+    mean_balance + outlier_penalty(둘 다 "팀 간" 격차를 보는 항목)의
+    합이 team_variance보다 항상 훨씬 커야 한다 - 그렇지 않으면 비슷한
+    티어끼리 팀 내부적으로만 뭉쳐서 팀 간 평균 격차를 오히려 키우는
+    조합이 구조적으로 유리해질 수 있다."""
 
     name = "stable"
 
     def feature_config(self) -> dict[str, FeatureConfig]:
         return {
-            "inter_team_balance": FeatureConfig(enabled=True, weight=0.30),
-            "average_rating": FeatureConfig(enabled=True, weight=0.25),
-            "lane_balance": FeatureConfig(enabled=True, weight=0.20),
-            "team_variance": FeatureConfig(enabled=True, weight=0.10),
+            "mean_balance": FeatureConfig(enabled=True, weight=0.28),
+            "outlier_penalty": FeatureConfig(enabled=True, weight=0.27),
+            "lane_balance": FeatureConfig(enabled=True, weight=0.18),
+            "team_variance": FeatureConfig(enabled=True, weight=0.12),
             "tier_distribution": FeatureConfig(enabled=True, weight=0.08),
             "internal_rating": FeatureConfig(enabled=True, weight=0.05),
             "role_penalty": FeatureConfig(enabled=True, weight=0.02),

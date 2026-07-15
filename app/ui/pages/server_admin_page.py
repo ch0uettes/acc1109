@@ -154,12 +154,22 @@ def _render_balance_config(service: ServerService, server_id: int, actor: Server
         st.markdown("**Feature Normalizer**")
         col1, col2 = st.columns(2)
         with col1:
-            avg_midpoint = st.number_input(
-                "팀 평균 Rating 격차 - 중심점 (Logistic)", value=norm.average_rating_midpoint, min_value=0.0, step=50.0
+            mean_balance_midpoint = st.number_input(
+                "전체 평균 균형 - 중심점 (Logistic)", value=norm.mean_balance_midpoint, min_value=0.0, step=50.0
             )
-            avg_steepness = st.number_input(
-                "팀 평균 Rating 격차 - 기울기",
-                value=norm.average_rating_steepness,
+            mean_balance_steepness = st.number_input(
+                "전체 평균 균형 - 기울기",
+                value=norm.mean_balance_steepness,
+                min_value=0.0001,
+                step=0.0005,
+                format="%.4f",
+            )
+            outlier_penalty_midpoint = st.number_input(
+                "극단 팀 페널티 - 중심점 (Logistic)", value=norm.outlier_penalty_midpoint, min_value=0.0, step=50.0
+            )
+            outlier_penalty_steepness = st.number_input(
+                "극단 팀 페널티 - 기울기",
+                value=norm.outlier_penalty_steepness,
                 min_value=0.0001,
                 step=0.0005,
                 format="%.4f",
@@ -174,10 +184,10 @@ def _render_balance_config(service: ServerService, server_id: int, actor: Server
                 step=0.0005,
                 format="%.4f",
             )
+        with col2:
             lane_difference_max = st.number_input(
                 "라인별 격차 상한 (Linear)", value=norm.lane_difference_max, min_value=1.0, step=100.0
             )
-        with col2:
             team_variance_scale = st.number_input(
                 "팀 내부 분산 스케일 (Logarithmic)", value=norm.team_variance_scale, min_value=1.0, step=1000.0
             )
@@ -203,9 +213,11 @@ def _render_balance_config(service: ServerService, server_id: int, actor: Server
         )
         hcol1, hcol2 = st.columns(2)
         with hcol1:
-            use_avg_max = st.checkbox("팀 평균 Rating 격차 상한 사용", value=hard.average_rating_diff_max is not None)
-            avg_diff_max = st.number_input(
-                "상한 값", value=hard.average_rating_diff_max or 1000.0, min_value=0.0, step=50.0, key="avg_diff_max"
+            use_mean_balance_max = st.checkbox(
+                "전체 평균 균형 상한 사용", value=hard.mean_balance_diff_max is not None
+            )
+            mean_balance_diff_max = st.number_input(
+                "상한 값", value=hard.mean_balance_diff_max or 1000.0, min_value=0.0, step=50.0, key="mean_balance_diff_max"
             )
             use_lane_max = st.checkbox("라인별 격차 상한 사용", value=hard.lane_diff_max is not None)
             lane_diff_max = st.number_input(
@@ -232,8 +244,10 @@ def _render_balance_config(service: ServerService, server_id: int, actor: Server
 
         if submitted:
             normalization = NormalizationConfig(
-                average_rating_midpoint=avg_midpoint,
-                average_rating_steepness=avg_steepness,
+                mean_balance_midpoint=mean_balance_midpoint,
+                mean_balance_steepness=mean_balance_steepness,
+                outlier_penalty_midpoint=outlier_penalty_midpoint,
+                outlier_penalty_steepness=outlier_penalty_steepness,
                 internal_rating_midpoint=internal_midpoint,
                 internal_rating_steepness=internal_steepness,
                 lane_difference_max=lane_difference_max,
@@ -244,7 +258,7 @@ def _render_balance_config(service: ServerService, server_id: int, actor: Server
                 role_penalty_max=role_penalty_max,
             )
             hard_constraint = HardConstraintConfig(
-                average_rating_diff_max=avg_diff_max if use_avg_max else None,
+                mean_balance_diff_max=mean_balance_diff_max if use_mean_balance_max else None,
                 lane_diff_max=lane_diff_max if use_lane_max else None,
                 team_variance_max=team_variance_max if use_variance_max else None,
                 minimum_main_role_ratio=minimum_main_ratio if use_main_ratio else None,

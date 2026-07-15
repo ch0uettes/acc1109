@@ -43,7 +43,7 @@ class FeatureConfig:
 # pipeline. This dict exists purely to keep the legacy optimizers' tests
 # working exactly as before.
 DEFAULT_FEATURE_CONFIG: dict[str, FeatureConfig] = {
-    "average_rating": FeatureConfig(enabled=True, weight=1.0),
+    "mean_balance": FeatureConfig(enabled=True, weight=1.0),
     "team_variance": FeatureConfig(enabled=True, weight=0.5),
     "role_penalty": FeatureConfig(enabled=False, weight=1.0),
     "lane_balance": FeatureConfig(enabled=False, weight=1.0),
@@ -68,24 +68,31 @@ class NormalizationConfig:
     starting point, not a guarantee of "correct" - tune per server if a
     community's real rating spread differs."""
 
-    # average_rating is now stddev-of-team-averages (not max-min), which
-    # runs noticeably smaller in raw magnitude than max-min did for the
-    # same distribution (empirically ~1/2.5x for a 4-team split) - the
-    # midpoint/steepness are recalibrated accordingly, not just copied
-    # from the old max-min-era defaults.
-    average_rating_midpoint: float = 160.0
-    average_rating_steepness: float = 0.0184
+    # mean_balance is stddev-of-team-averages around the global mean -
+    # empirically runs ~1/2.5x smaller in raw magnitude than the old
+    # max-min measure did for the same distribution, so midpoint/
+    # steepness are calibrated for that scale, not copied from max-min.
+    mean_balance_midpoint: float = 160.0
+    mean_balance_steepness: float = 0.0184
     internal_rating_midpoint: float = 400.0
     internal_rating_steepness: float = 0.0075
-    # lane_difference is now an RMS of per-lane gaps (not a sum), so its
-    # raw scale sits closer to a single bad lane's gap rather than 5x
-    # that - recalibrated down from the old sum-based ceiling.
+    # lane_difference is an RMS of per-lane gaps (not a sum), so its raw
+    # scale sits closer to a single bad lane's gap rather than 5x that.
     lane_difference_max: float = 2500.0
-    team_variance_scale: float = 200_000.0
-    # variance (not stddev) of team averages - squares deviations, so a
-    # single team far from the mean is penalized much harder than the
-    # same gap spread evenly across teams (see InterTeamBalanceFeature).
-    inter_team_balance_scale: float = 200_000.0
+    # team_variance is now the AVERAGE of each team's own internal
+    # variance (not a max-min gap between teams' variances), which runs
+    # much larger in raw magnitude for the same roster - recalibrated up
+    # roughly 20x from the old gap-based scale so a typical mixed-tier
+    # team (variance in the several-hundred-thousand range) doesn't
+    # saturate the Normalizer at 1.0 for every candidate.
+    team_variance_scale: float = 4_000_000.0
+    # outlier_penalty is the single worst team's absolute deviation from
+    # the global mean (not every team's spread) - a linear rating-point
+    # unit, so it gets a Logistic curve like mean_balance, calibrated to
+    # ramp up sharply (per the PRD's "Outlier가 있으면 Penalty가 급격히
+    # 증가해야 한다") rather than mean_balance's gentler slope.
+    outlier_penalty_midpoint: float = 300.0
+    outlier_penalty_steepness: float = 0.01
     tier_distribution_breakpoints: tuple[tuple[float, float], ...] = (
         (0.0, 0.0),
         (2.0, 0.2),
@@ -111,7 +118,7 @@ class HardConstraintConfig:
     Tighten a field only when an operator genuinely wants to hard-exclude
     certain splits for one server/event."""
 
-    average_rating_diff_max: float | None = None
+    mean_balance_diff_max: float | None = None
     lane_diff_max: float | None = None
     team_variance_max: float | None = None
     minimum_main_role_ratio: float | None = None

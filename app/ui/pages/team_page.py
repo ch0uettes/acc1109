@@ -17,9 +17,9 @@ from app.utils.exceptions import InvalidPlayerCountError
 NO_SUB_ROLE = "없음"
 
 BREAKDOWN_LABELS = {
-    "average_rating": "팀 평균 표준편차",
-    "inter_team_balance": "팀 간 평균 분산",
-    "team_variance": "팀 내부 편차 격차",
+    "mean_balance": "전체 평균 균형",
+    "outlier_penalty": "극단 팀 페널티",
+    "team_variance": "팀 내부 안정성",
     "role_penalty": "포지션 페널티",
     "lane_balance": "라인별 격차 (RMS)",
     "tier_distribution": "티어 분포 격차",

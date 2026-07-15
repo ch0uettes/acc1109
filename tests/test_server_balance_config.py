@@ -39,8 +39,10 @@ def test_owner_can_update_and_reload_balance_config(session):
     server = service.create_server("테스트 서버", owner_display_name="홍길동")
 
     normalization = NormalizationConfig(
-        average_rating_midpoint=300.0,
-        average_rating_steepness=0.01,
+        mean_balance_midpoint=300.0,
+        mean_balance_steepness=0.01,
+        outlier_penalty_midpoint=300.0,
+        outlier_penalty_steepness=0.01,
         internal_rating_midpoint=300.0,
         internal_rating_steepness=0.01,
         lane_difference_max=4000.0,
@@ -49,7 +51,7 @@ def test_owner_can_update_and_reload_balance_config(session):
         role_penalty_max=800.0,
     )
     hard_constraint = HardConstraintConfig(
-        average_rating_diff_max=900.0,
+        mean_balance_diff_max=900.0,
         lane_diff_max=None,
         team_variance_max=None,
         minimum_main_role_ratio=0.5,

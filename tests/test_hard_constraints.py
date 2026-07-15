@@ -26,7 +26,7 @@ def test_default_config_never_rejects_a_structurally_valid_candidate():
     # Penalty, not Hard Constraint, is the primary fairness lever.
     layer = HardConstraintLayer()
     teams = [_full_team(0), _full_team(1)]
-    raw_breakdown = {"average_rating": 999_999.0, "lane_balance": 999_999.0, "team_variance": 999_999.0}
+    raw_breakdown = {"mean_balance": 999_999.0, "lane_balance": 999_999.0, "team_variance": 999_999.0}
     assert layer.is_feasible(teams, raw_breakdown) is True
 
 
@@ -49,11 +49,11 @@ def test_rejects_a_team_missing_a_position_slot():
     assert layer.is_feasible(teams, {}) is False
 
 
-def test_configured_average_rating_threshold_rejects_over_the_limit():
-    layer = HardConstraintLayer(HardConstraintConfig(average_rating_diff_max=500.0))
+def test_configured_mean_balance_threshold_rejects_over_the_limit():
+    layer = HardConstraintLayer(HardConstraintConfig(mean_balance_diff_max=500.0))
     teams = [_full_team(0), _full_team(1)]
-    assert layer.is_feasible(teams, {"average_rating": 501.0}) is False
-    assert layer.is_feasible(teams, {"average_rating": 500.0}) is True
+    assert layer.is_feasible(teams, {"mean_balance": 501.0}) is False
+    assert layer.is_feasible(teams, {"mean_balance": 500.0}) is True
 
 
 def test_configured_minimum_main_role_ratio_rejects_below_the_floor():

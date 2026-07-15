@@ -5,7 +5,7 @@ from app.balance.features.evaluator import BalanceEvaluator
 from app.balance.features.lane import LaneBalanceFeature, RolePenaltyFeature
 from app.balance.features.metadata import FeatureMetadata
 from app.balance.features.performance import RecentFormFeature
-from app.balance.features.rating import AverageRatingFeature, InternalRatingFeature
+from app.balance.features.rating import InternalRatingFeature, MeanBalanceFeature
 from app.balance.features.registry import (
     DEFAULT_FEATURE_REGISTRY,
     FEATURE_REGISTRY,
@@ -15,7 +15,7 @@ from app.balance.features.registry import (
 )
 from app.balance.features.synergy import SynergyFeature
 from app.balance.features.team import (
-    InterTeamBalanceFeature,
+    OutlierPenaltyFeature,
     PenaltyFeature,
     TeamVarianceFeature,
     TierDistributionFeature,
@@ -34,9 +34,9 @@ __all__ = [
     "FEATURE_REGISTRY",
     "build_balance_evaluator",
     "default_balance_evaluator",
-    "AverageRatingFeature",
+    "MeanBalanceFeature",
     "InternalRatingFeature",
-    "InterTeamBalanceFeature",
+    "OutlierPenaltyFeature",
     "LaneBalanceFeature",
     "RolePenaltyFeature",
     "TeamVarianceFeature",

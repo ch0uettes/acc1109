@@ -156,7 +156,7 @@ def test_custom_normalization_config_actually_changes_reported_cost():
     default_engine = BacktrackingSearchEngine(max_nodes=50, time_budget_seconds=2.0)
     default_result = default_engine.search(players, preferences)
 
-    tight_config = NormalizationConfig(average_rating_midpoint=1.0, average_rating_steepness=1.0)
+    tight_config = NormalizationConfig(mean_balance_midpoint=1.0, mean_balance_steepness=1.0)
     custom_engine = BacktrackingSearchEngine(
         max_nodes=50, time_budget_seconds=2.0, normalization_config=tight_config
     )
@@ -171,7 +171,7 @@ def test_hard_constraint_layer_falls_back_to_warm_start_when_nothing_satisfies_i
     # guarantee - see BacktrackingSearchEngine's docstring).
     players = _players(10)
     preferences = _preferences(players)
-    impossible = HardConstraintLayer(HardConstraintConfig(average_rating_diff_max=-1.0))
+    impossible = HardConstraintLayer(HardConstraintConfig(mean_balance_diff_max=-1.0))
     engine = BacktrackingSearchEngine(max_nodes=50, time_budget_seconds=2.0, hard_constraints=impossible)
 
     result = engine.search(players, preferences)
@@ -228,7 +228,7 @@ def test_search_normalizes_cost_to_a_bounded_range_regardless_of_rating_scale():
     # Regression test for the raw-Feature-scale-dominance bug: before
     # normalizing each Feature to [0, 1] across the candidate pool before
     # weighting, team_variance's squared-rating-point values (tens of
-    # thousands) swamped average_rating's linear ones (hundreds) no
+    # thousands) swamped mean_balance's linear ones (hundreds) no
     # matter what the Strategy's weight table said, so `cost` could run
     # into the thousands. Weights sum to ~1.0 per Strategy, so a properly
     # normalized cost must stay in a small bounded range even when raw

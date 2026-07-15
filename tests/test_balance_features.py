@@ -5,12 +5,12 @@ import pytest
 from app.balance.config import DEFAULT_FEATURE_CONFIG, FeatureConfig
 from app.balance.features import (
     FEATURE_REGISTRY,
-    AverageRatingFeature,
     BalanceEvaluator,
     FeatureRegistry,
     InternalRatingFeature,
-    InterTeamBalanceFeature,
     LaneBalanceFeature,
+    MeanBalanceFeature,
+    OutlierPenaltyFeature,
     RolePenaltyFeature,
     TeamVarianceFeature,
     TierDistributionFeature,
@@ -46,25 +46,29 @@ class _FixedWeightStrategy(IBalanceStrategy):
         return self._config
 
 
-def test_average_rating_feature():
+# --- MeanBalanceFeature: 전체 평균 균형 - stddev of team averages
+# around the global mean, considered together. ---
+
+
+def test_mean_balance_feature():
     team_a = Team(index=0, players=[_player(100), _player(100)])
     team_b = Team(index=1, players=[_player(200), _player(200)])
     # final_rating blends official_rating with internal_rating (0 here) at
     # the brand-new-player weight (0.9 base / 0.1 internal by default), so
     # team averages are 90 and 180 - stddev of two points is half their
     # gap (population stdev, not sample).
-    assert AverageRatingFeature().evaluate_raw([team_a, team_b]) == 45.0
+    assert MeanBalanceFeature().evaluate_raw([team_a, team_b]) == 45.0
 
 
-def test_average_rating_feature_normalizes_via_smooth_logistic_curve():
+def test_mean_balance_feature_normalizes_via_smooth_logistic_curve():
     # No single raw value flips the score from "low" to "high" - values
     # just below and just above the midpoint score nearly the same,
     # unlike a hard threshold (see LogisticNormalizer's docstring).
-    feature = AverageRatingFeature()
-    below = feature.normalize(399.0)
-    above = feature.normalize(401.0)
+    feature = MeanBalanceFeature()
+    below = feature.normalize(159.0)
+    above = feature.normalize(161.0)
     assert below == pytest.approx(above, abs=0.01)
-    assert feature.normalize(0.0) < feature.normalize(400.0) < feature.normalize(2000.0)
+    assert feature.normalize(0.0) < feature.normalize(160.0) < feature.normalize(800.0)
 
 
 def test_team_variance_feature_zero_when_equal_spread():
@@ -72,6 +76,22 @@ def test_team_variance_feature_zero_when_equal_spread():
     team_b = Team(index=1, players=[_player(150), _player(250)])
     value = TeamVarianceFeature().evaluate_raw([team_a, team_b])
     assert value >= 0
+
+
+def test_team_variance_feature_averages_per_team_variance_not_a_cross_team_gap():
+    # A single messy team should be penalized on its own merits - the
+    # OTHER team being equally messy or perfectly uniform shouldn't
+    # change how bad the first team's own spread is judged.
+    messy = Team(index=0, players=[_player(2500), _player(2100), _player(1800), _player(1400), _player(900)])
+    uniform = Team(index=1, players=[_player(1800), _player(1790), _player(1810), _player(1785), _player(1805)])
+
+    messy_alone = TeamVarianceFeature().evaluate_raw([messy, messy])
+    mixed = TeamVarianceFeature().evaluate_raw([messy, uniform])
+
+    # Averaging per-team variance means pairing the messy team with a
+    # uniform one should score roughly half of pairing it with another
+    # messy team - not zero, and not dominated by a cross-team gap.
+    assert mixed == pytest.approx(messy_alone / 2, rel=0.05)
 
 
 def test_team_variance_feature_normalizes_via_logarithmic_curve():
@@ -167,44 +187,44 @@ def test_lane_balance_feature_normalizes_linearly():
     assert feature.normalize(10_000.0) == 1.0  # clipped
 
 
-# --- InterTeamBalanceFeature: variance (not stddev) of team averages -
-# squares deviations so a single far-off team is punished harder than
-# the same total gap spread evenly, complementing AverageRatingFeature. ---
+# --- OutlierPenaltyFeature: 극단적인 팀 생성 방지 - the single WORST
+# team's absolute deviation from the global mean, isolated from every
+# other team's own spread (that's MeanBalanceFeature's job). ---
 
 
-def test_inter_team_balance_feature_computes_variance_of_team_averages():
+def test_outlier_penalty_feature_computes_max_absolute_deviation():
     team_a = Team(index=0, players=[_player(100), _player(100)])  # avg final_rating 90
     team_b = Team(index=1, players=[_player(200), _player(200)])  # avg final_rating 180
-    # population variance of [90, 180]: mean=135, deviations +-45, squared=2025 each
-    assert InterTeamBalanceFeature().evaluate_raw([team_a, team_b]) == pytest.approx(2025.0)
+    # mean=135, deviations +-45 -> max absolute deviation is 45
+    assert OutlierPenaltyFeature().evaluate_raw([team_a, team_b]) == pytest.approx(45.0)
 
 
-def test_inter_team_balance_feature_zero_when_all_team_averages_equal():
+def test_outlier_penalty_feature_zero_when_all_team_averages_equal():
     team_a = Team(index=0, players=[_player(100), _player(200)])
     team_b = Team(index=1, players=[_player(150), _player(150)])
-    assert InterTeamBalanceFeature().evaluate_raw([team_a, team_b]) == pytest.approx(0.0)
+    assert OutlierPenaltyFeature().evaluate_raw([team_a, team_b]) == pytest.approx(0.0)
 
 
-def test_inter_team_balance_feature_punishes_one_outlier_team_harder_than_stddev_would():
-    # Same total spread, but concentrated in one team vs spread evenly -
-    # variance (squared) should separate these more sharply than a
-    # linear/stddev-based measure would.
+def test_outlier_penalty_feature_punishes_a_single_outlier_more_than_an_even_spread():
+    # Same overall range (100 to 400 in both cases), but concentrated in
+    # ONE team vs graduated evenly across all teams - a single true
+    # outlier should score worse, since outlier_penalty isolates the
+    # single worst team rather than reflecting the whole distribution.
     one_outlier = [Team(index=i, players=[_player(v), _player(v)]) for i, v in enumerate([100, 100, 100, 400])]
     evenly_spread = [Team(index=i, players=[_player(v), _player(v)]) for i, v in enumerate([100, 200, 300, 400])]
 
-    outlier_variance = InterTeamBalanceFeature().evaluate_raw(one_outlier)
-    spread_variance = InterTeamBalanceFeature().evaluate_raw(evenly_spread)
+    outlier_penalty = OutlierPenaltyFeature().evaluate_raw(one_outlier)
+    spread_penalty = OutlierPenaltyFeature().evaluate_raw(evenly_spread)
 
-    assert outlier_variance > 0
-    assert spread_variance > 0
+    assert outlier_penalty > spread_penalty
 
 
-def test_inter_team_balance_feature_normalizes_logarithmically():
-    feature = InterTeamBalanceFeature()
-    assert feature.normalize(0.0) == 0.0
-    small, large = feature.normalize(5_000.0), feature.normalize(50_000.0)
-    assert small < large
-    assert large < small * 10  # compressed, not linear
+def test_outlier_penalty_feature_normalizes_sharply_via_logistic_curve():
+    feature = OutlierPenaltyFeature()
+    assert feature.normalize(0.0) < feature.normalize(300.0) < feature.normalize(1000.0)
+    below = feature.normalize(299.0)
+    above = feature.normalize(301.0)
+    assert below == pytest.approx(above, abs=0.01)
 
 
 def test_tier_distribution_feature_counts_gap_per_tier():
@@ -242,28 +262,28 @@ def test_balance_evaluator_evaluate_raw_returns_unweighted_breakdown():
     team_a = Team(index=0, players=[_player(100)])
     team_b = Team(index=1, players=[_player(200)])
 
-    breakdown = BalanceEvaluator().evaluate_raw([team_a, team_b], [AverageRatingFeature()])
+    breakdown = BalanceEvaluator().evaluate_raw([team_a, team_b], [MeanBalanceFeature()])
 
-    assert breakdown == {"average_rating": pytest.approx(45.0)}
+    assert breakdown == {"mean_balance": pytest.approx(45.0)}
 
 
 def test_balance_evaluator_normalize_delegates_to_each_features_own_normalizer():
     # BalanceEvaluator does no normalization math itself - it just routes
     # each raw value to the Feature instance that produced it.
-    raw = {"average_rating": 400.0}
-    normalized = BalanceEvaluator().normalize(raw, [AverageRatingFeature()])
-    assert normalized["average_rating"] == pytest.approx(AverageRatingFeature().normalize(400.0))
+    raw = {"mean_balance": 400.0}
+    normalized = BalanceEvaluator().normalize(raw, [MeanBalanceFeature()])
+    assert normalized["mean_balance"] == pytest.approx(MeanBalanceFeature().normalize(400.0))
 
 
 def test_balance_evaluator_combine_applies_strategy_weight_to_normalized_values():
-    strategy = _FixedWeightStrategy({"average_rating": FeatureConfig(enabled=True, weight=2.0)})
-    total = BalanceEvaluator().combine({"average_rating": 0.5}, strategy)
+    strategy = _FixedWeightStrategy({"mean_balance": FeatureConfig(enabled=True, weight=2.0)})
+    total = BalanceEvaluator().combine({"mean_balance": 0.5}, strategy)
     assert total == pytest.approx(1.0)
 
 
 def test_balance_evaluator_combine_skips_features_the_strategy_weighs_zero():
-    strategy = _FixedWeightStrategy({"average_rating": FeatureConfig(enabled=True, weight=0.0)})
-    total = BalanceEvaluator().combine({"average_rating": 0.9}, strategy)
+    strategy = _FixedWeightStrategy({"mean_balance": FeatureConfig(enabled=True, weight=0.0)})
+    total = BalanceEvaluator().combine({"mean_balance": 0.9}, strategy)
     assert total == 0.0
 
 
@@ -274,40 +294,40 @@ def test_balance_evaluator_combine_skips_features_the_strategy_weighs_zero():
 
 def test_explain_reports_the_full_raw_normalized_weight_contribution_chain():
     strategy = _FixedWeightStrategy(
-        {"average_rating": FeatureConfig(enabled=True, weight=0.5), "lane_balance": FeatureConfig(enabled=True, weight=0.5)}
+        {"mean_balance": FeatureConfig(enabled=True, weight=0.5), "lane_balance": FeatureConfig(enabled=True, weight=0.5)}
     )
-    raw = {"average_rating": 200.0, "lane_balance": 400.0}
-    normalized = {"average_rating": 0.2, "lane_balance": 0.6}
+    raw = {"mean_balance": 200.0, "lane_balance": 400.0}
+    normalized = {"mean_balance": 0.2, "lane_balance": 0.6}
 
     contributions = BalanceEvaluator().explain(raw, normalized, strategy)
     by_name = {c.name: c for c in contributions}
 
-    assert by_name["average_rating"].raw == 200.0
-    assert by_name["average_rating"].normalized == 0.2
-    assert by_name["average_rating"].weight == 0.5
-    assert by_name["average_rating"].contribution == pytest.approx(0.1)
+    assert by_name["mean_balance"].raw == 200.0
+    assert by_name["mean_balance"].normalized == 0.2
+    assert by_name["mean_balance"].weight == 0.5
+    assert by_name["mean_balance"].contribution == pytest.approx(0.1)
     assert by_name["lane_balance"].contribution == pytest.approx(0.3)
 
     total = 0.1 + 0.3
-    assert by_name["average_rating"].contribution_pct == pytest.approx(0.1 / total * 100)
+    assert by_name["mean_balance"].contribution_pct == pytest.approx(0.1 / total * 100)
     assert by_name["lane_balance"].contribution_pct == pytest.approx(0.3 / total * 100)
 
 
 def test_explain_sorts_contributions_descending():
     strategy = _FixedWeightStrategy(
-        {"average_rating": FeatureConfig(enabled=True, weight=0.1), "lane_balance": FeatureConfig(enabled=True, weight=0.9)}
+        {"mean_balance": FeatureConfig(enabled=True, weight=0.1), "lane_balance": FeatureConfig(enabled=True, weight=0.9)}
     )
-    raw = {"average_rating": 100.0, "lane_balance": 100.0}
-    normalized = {"average_rating": 0.5, "lane_balance": 0.5}
+    raw = {"mean_balance": 100.0, "lane_balance": 100.0}
+    normalized = {"mean_balance": 0.5, "lane_balance": 0.5}
 
     contributions = BalanceEvaluator().explain(raw, normalized, strategy)
 
-    assert [c.name for c in contributions] == ["lane_balance", "average_rating"]
+    assert [c.name for c in contributions] == ["lane_balance", "mean_balance"]
 
 
 def test_explain_contribution_pct_is_zero_when_total_cost_is_zero():
-    strategy = _FixedWeightStrategy({"average_rating": FeatureConfig(enabled=True, weight=0.5)})
-    contributions = BalanceEvaluator().explain({"average_rating": 100.0}, {"average_rating": 0.0}, strategy)
+    strategy = _FixedWeightStrategy({"mean_balance": FeatureConfig(enabled=True, weight=0.5)})
+    contributions = BalanceEvaluator().explain({"mean_balance": 100.0}, {"mean_balance": 0.0}, strategy)
     assert contributions[0].contribution_pct == 0.0
 
 
@@ -318,13 +338,13 @@ def test_balance_evaluator_does_not_know_feature_count_ahead_of_time():
     team_a = Team(index=0, players=[_player(100)])
     team_b = Team(index=1, players=[_player(200)])
 
-    breakdown_one = evaluator.evaluate_raw([team_a, team_b], [AverageRatingFeature()])
+    breakdown_one = evaluator.evaluate_raw([team_a, team_b], [MeanBalanceFeature()])
     breakdown_two = evaluator.evaluate_raw(
-        [team_a, team_b], [AverageRatingFeature(), TeamVarianceFeature()]
+        [team_a, team_b], [MeanBalanceFeature(), TeamVarianceFeature()]
     )
 
-    assert set(breakdown_one.keys()) == {"average_rating"}
-    assert set(breakdown_two.keys()) == {"average_rating", "team_variance"}
+    assert set(breakdown_one.keys()) == {"mean_balance"}
+    assert set(breakdown_two.keys()) == {"mean_balance", "team_variance"}
 
 
 # --- FeatureRegistry: registration/lookup/category/metadata/removal ---
@@ -332,24 +352,24 @@ def test_balance_evaluator_does_not_know_feature_count_ahead_of_time():
 
 def test_feature_registry_register_and_get():
     registry = FeatureRegistry()
-    registry.register(AverageRatingFeature)
-    assert registry.get("average_rating") is AverageRatingFeature
-    assert "average_rating" in registry.names()
+    registry.register(MeanBalanceFeature)
+    assert registry.get("mean_balance") is MeanBalanceFeature
+    assert "mean_balance" in registry.names()
 
 
 def test_feature_registry_unregister():
     registry = FeatureRegistry()
-    registry.register(AverageRatingFeature)
-    registry.unregister("average_rating")
-    assert "average_rating" not in registry.names()
+    registry.register(MeanBalanceFeature)
+    registry.unregister("mean_balance")
+    assert "mean_balance" not in registry.names()
 
 
 def test_feature_registry_by_category():
     registry = FeatureRegistry()
-    registry.register(AverageRatingFeature)
+    registry.register(MeanBalanceFeature)
     registry.register(InternalRatingFeature)
     registry.register(LaneBalanceFeature)
-    assert set(registry.by_category("rating")) == {"average_rating", "internal_rating"}
+    assert set(registry.by_category("rating")) == {"mean_balance", "internal_rating"}
     assert registry.by_category("lane") == ["lane_balance"]
 
 
@@ -364,23 +384,23 @@ def test_feature_registry_metadata_reflects_feature_class():
 
 def test_feature_registry_get_active_features_respects_strategy():
     registry = FeatureRegistry()
-    registry.register(AverageRatingFeature)
+    registry.register(MeanBalanceFeature)
     registry.register(TeamVarianceFeature)
     strategy = _FixedWeightStrategy(
         {
-            "average_rating": FeatureConfig(enabled=True, weight=1.0),
+            "mean_balance": FeatureConfig(enabled=True, weight=1.0),
             "team_variance": FeatureConfig(enabled=False, weight=1.0),
         }
     )
     active = registry.get_active_features(strategy)
-    assert [f.name for f in active] == ["average_rating"]
+    assert [f.name for f in active] == ["mean_balance"]
 
 
 def test_new_feature_registers_without_touching_evaluator_or_registry_code():
     """Proves the ①구현 ②등록 ③Strategy Config 흐름: a brand-new Feature
     plugs in with zero edits to BalanceEvaluator or FeatureRegistry."""
 
-    class DummyFeature(AverageRatingFeature):
+    class DummyFeature(MeanBalanceFeature):
         name = "dummy"
 
         def evaluate_raw(self, teams):
@@ -405,7 +425,7 @@ def test_new_feature_registers_without_touching_evaluator_or_registry_code():
 def test_build_balance_evaluator_only_registers_enabled_features():
     evaluator = build_balance_evaluator(DEFAULT_FEATURE_CONFIG)
     names = {feature.name for feature in evaluator.features}
-    assert names == {"average_rating", "team_variance"}
+    assert names == {"mean_balance", "team_variance"}
 
 
 def test_each_strategy_feature_config_only_references_registered_features():

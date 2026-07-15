@@ -38,8 +38,8 @@ class HardConstraintLayer:
             return False
 
         cfg = self.config
-        if cfg.average_rating_diff_max is not None:
-            if raw_breakdown.get("average_rating", 0.0) > cfg.average_rating_diff_max:
+        if cfg.mean_balance_diff_max is not None:
+            if raw_breakdown.get("mean_balance", 0.0) > cfg.mean_balance_diff_max:
                 return False
         if cfg.lane_diff_max is not None:
             if raw_breakdown.get("lane_balance", 0.0) > cfg.lane_diff_max:
