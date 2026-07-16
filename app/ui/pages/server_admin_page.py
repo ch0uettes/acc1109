@@ -4,6 +4,7 @@ import streamlit as st
 from sqlalchemy.orm import Session
 
 from app.balance.config import HardConstraintConfig, NormalizationConfig
+from app.balance.constraint_engine import DEFAULT_CONSTRAINT_REGISTRY, ConstraintPipeline, ConstraintTier
 from app.models.server_membership import ServerMembership
 from app.services.rbac import Permission, has_permission
 from app.services.server_service import ServerService
@@ -16,6 +17,21 @@ ROLE_LABEL = {
     Role.SERVER_ADMIN: "Server Admin",
     Role.MODERATOR: "Moderator",
     Role.PLAYER: "Player",
+}
+
+CONSTRAINT_TIER_LABEL = {
+    ConstraintTier.PARTIAL_HARD: "Partial-Hard (탐색 중 가지치기)",
+    ConstraintTier.LEAF_HARD: "Leaf-Hard (완성된 팀 검증)",
+    ConstraintTier.SOFT: "Soft (탐색 순서 힌트)",
+    ConstraintTier.PREFERENCE: "Preference (운영 정책)",
+}
+
+CONSTRAINT_PIPELINE_LABEL = {
+    ConstraintPipeline.STRUCTURAL: "Structural (팀 구성 무결성)",
+    ConstraintPipeline.ROLE: "Role (포지션 규칙)",
+    ConstraintPipeline.RELATIONSHIP: "Relationship (듀오/분리)",
+    ConstraintPipeline.PREFERENCE: "Preference (대회/서버 정책)",
+    ConstraintPipeline.SEARCH_GUIDANCE: "Search Guidance (탐색 힌트)",
 }
 
 
@@ -42,6 +58,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
     if has_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS):
         _render_season_label(service, server_id, actor)
         _render_balance_config(service, server_id, actor)
+        _render_constraint_priorities(service, server_id, actor)
 
     st.subheader("역할 변경 이력 (Audit Log)")
     history = service.role_change_history(server_id)
@@ -300,6 +317,71 @@ def _render_balance_config(service: ServerService, server_id: int, actor: Server
                 service.update_balance_config(
                     server_id, actor.display_name, NormalizationConfig(), HardConstraintConfig()
                 )
+            except AppError as exc:
+                st.error(str(exc))
+            else:
+                st.success("기본값으로 초기화했습니다.")
+                st.rerun()
+
+
+def _render_constraint_priorities(service: ServerService, server_id: int, actor: ServerMembership) -> None:
+    st.subheader("Constraint 우선순위 (Search Guidance Engine)")
+    st.caption(
+        "팀 탐색 중 실제로 작동하는 Constraint 목록입니다. 우선순위는 같은 Tier 안에서 어느 것을 "
+        "먼저 평가할지만 정합니다 - 지금 활성화된 4개는 전부 Leaf-Hard(완성된 팀을 전부 검사)라 "
+        "순서를 바꿔도 통과/거부 결과 자체는 달라지지 않습니다. Soft/Preference Constraint가 "
+        "추가되면 그때부터 우선순위가 탐색 순서에 실제로 영향을 줍니다."
+    )
+    server = service.get_server(server_id)
+    if server is None:
+        return
+
+    names = DEFAULT_CONSTRAINT_REGISTRY.names()
+    if not names:
+        st.info("등록된 Constraint가 없습니다.")
+        return
+
+    overrides = server.constraint_priorities
+    with st.form("constraint_priorities_form"):
+        new_priorities: dict[str, int] = {}
+        for name in names:
+            constraint_cls = DEFAULT_CONSTRAINT_REGISTRY.get(name)
+            current_priority = overrides.get(name, constraint_cls.default_priority)
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"**{name}**")
+                st.caption(
+                    f"{constraint_cls.description}  \n"
+                    f"{CONSTRAINT_TIER_LABEL[constraint_cls.tier]} · "
+                    f"{CONSTRAINT_PIPELINE_LABEL[constraint_cls.pipeline]} · "
+                    f"기본 우선순위 {constraint_cls.default_priority}"
+                )
+            new_priorities[name] = int(
+                col2.number_input(
+                    "우선순위",
+                    value=int(current_priority),
+                    step=5,
+                    key=f"constraint_priority_{name}",
+                    label_visibility="collapsed",
+                )
+            )
+
+        save_col, reset_col = st.columns(2)
+        submitted = save_col.form_submit_button("저장")
+        reset = reset_col.form_submit_button("기본값으로 초기화")
+
+        if submitted:
+            try:
+                service.update_constraint_priorities(server_id, actor.display_name, new_priorities)
+            except AppError as exc:
+                st.error(str(exc))
+            else:
+                st.success("Constraint 우선순위를 저장했습니다.")
+                st.rerun()
+
+        if reset:
+            try:
+                service.update_constraint_priorities(server_id, actor.display_name, {})
             except AppError as exc:
                 st.error(str(exc))
             else:
