@@ -28,6 +28,7 @@ class PlayerEntity(Base):
     peak_tier: Mapped[Optional[str]] = mapped_column(nullable=True)
     peak_division: Mapped[Optional[str]] = mapped_column(nullable=True)
     peak_lp: Mapped[Optional[int]] = mapped_column(nullable=True)
+    peak_achieved_season: Mapped[Optional[str]] = mapped_column(nullable=True)
     official_rating: Mapped[Optional[float]] = mapped_column(nullable=True)
     seed_rating: Mapped[Optional[float]] = mapped_column(nullable=True)
     rating_source: Mapped[str] = mapped_column(default="CURRENT_SEASON")

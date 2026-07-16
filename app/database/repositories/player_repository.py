@@ -22,6 +22,7 @@ def _to_domain(entity: PlayerEntity) -> Player:
         peak_tier=Tier(entity.peak_tier) if entity.peak_tier else None,
         peak_division=Division(entity.peak_division) if entity.peak_division else None,
         peak_lp=entity.peak_lp,
+        peak_achieved_season=entity.peak_achieved_season,
         official_rating=entity.official_rating,
         seed_rating=entity.seed_rating,
         rating_source=RatingSource(entity.rating_source),
@@ -51,6 +52,7 @@ def _apply_domain(entity: PlayerEntity, player: Player) -> None:
     entity.peak_tier = player.peak_tier.value if player.peak_tier else None
     entity.peak_division = player.peak_division.value if player.peak_division else None
     entity.peak_lp = player.peak_lp
+    entity.peak_achieved_season = player.peak_achieved_season
     entity.official_rating = player.official_rating
     entity.seed_rating = player.seed_rating
     entity.rating_source = player.rating_source.value

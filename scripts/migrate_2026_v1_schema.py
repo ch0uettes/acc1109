@@ -47,6 +47,7 @@ NEW_COLUMNS: list[tuple[str, str, str]] = [
     ("decision_logs", "execution_time_seconds", "REAL"),
     ("decision_logs", "candidate_count", "INTEGER"),
     ("players", "is_active", "BOOLEAN"),
+    ("players", "peak_achieved_season", "TEXT"),
 ]
 
 

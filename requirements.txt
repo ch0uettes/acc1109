@@ -10,3 +10,4 @@ pytest
 requests
 Pillow
 easyocr
+beautifulsoup4

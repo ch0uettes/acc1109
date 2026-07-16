@@ -79,7 +79,8 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             {
                 "닉네임": p.nickname,
                 "현재 티어": _tier_display(p.tier, p.division, p.lp),
-                "최고 티어(참고용)": _tier_display(p.peak_tier, p.peak_division, p.peak_lp),
+                "최고 티어": _tier_display(p.peak_tier, p.peak_division, p.peak_lp),
+                "최고 티어 달성 시즌": p.peak_achieved_season or ("직접 입력" if p.peak_tier else "-"),
                 "주 포지션": p.main_role.value,
                 "부 포지션": p.sub_role.value if p.sub_role else None,
                 "Riot 추천": (
@@ -117,7 +118,7 @@ def _render_manual_tab(service: PlayerService, actor: ServerMembership) -> None:
         main_role = rcol1.selectbox("주 포지션", list(Position), key="manual_main_role")
         sub_role = _sub_role_selectbox("부 포지션 (선택)", key="manual_sub_role")
 
-        st.caption("최고 티어 (선택) - 참고용 메타데이터일 뿐, 레이팅 계산에는 쓰이지 않습니다.")
+        st.caption("최고 티어 (선택) - 현재 티어와 200점 이상 차이 나면 base rating 계산에 가중 반영됩니다.")
         no_peak = st.checkbox("최고 티어 정보 없음", key="manual_no_peak")
         pcol1, pcol2, pcol3 = st.columns(3)
         peak_tier = pcol1.selectbox("최고 티어", RANKED_TIERS, disabled=no_peak, key="manual_peak_tier")
@@ -175,11 +176,18 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
             except requests.HTTPError as exc:
                 st.error(f"Riot API 조회 실패: {exc}")
             else:
+                opgg_peak = service.fetch_peak_from_opgg(game_name, tag_line)
+                # New probe -> reset any stale peak-field widget state so the
+                # freshly fetched (or absent) OP.GG value actually takes
+                # effect as the selectbox default below.
+                for widget_key in ("riot_no_peak", "riot_peak_tier", "riot_peak_division", "riot_peak_lp"):
+                    st.session_state.pop(widget_key, None)
                 st.session_state["riot_probe"] = {
                     "puuid": puuid,
                     "current": current,
                     "nickname": nickname,
                     "recommendation": recommendation,
+                    "opgg_peak": opgg_peak,
                 }
 
     probe = st.session_state.get("riot_probe")
@@ -213,15 +221,52 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
         default=recommendation.sub if recommendation else None,
     )
 
-    st.caption("최고 티어 (선택) - 참고용 메타데이터일 뿐, 레이팅 계산에는 쓰이지 않습니다.")
-    no_peak = st.checkbox("최고 티어 정보 없음", key="riot_no_peak")
+    st.caption("최고 티어 (선택) - 참고용이 아니라, 현재 티어와 200점 이상 차이 나면 base rating 계산에 가중 반영됩니다.")
+    opgg_peak: tuple[TierSnapshot, str] | None = probe.get("opgg_peak")
+    if opgg_peak is not None:
+        fetched_snapshot, fetched_season = opgg_peak
+        st.caption(
+            f"출처: OP.GG - 자동으로 찾은 최고 티어({fetched_season} 시즌)로 아래 값이 채워졌습니다. "
+            "필요하면 직접 수정하세요."
+        )
+    else:
+        st.caption("OP.GG에서 최고 티어 이력을 찾지 못했습니다 - 알고 있다면 직접 입력해주세요 (선택 사항).")
+
+    no_peak = st.checkbox("최고 티어 정보 없음", value=opgg_peak is None, key="riot_no_peak")
     pcol1, pcol2, pcol3 = st.columns(3)
-    peak_tier = pcol1.selectbox("최고 티어", RANKED_TIERS, disabled=no_peak, key="riot_peak_tier")
-    peak_division = pcol2.selectbox("최고 디비전", list(Division), disabled=no_peak, key="riot_peak_division")
+    peak_tier = pcol1.selectbox(
+        "최고 티어",
+        RANKED_TIERS,
+        index=RANKED_TIERS.index(fetched_snapshot.tier) if opgg_peak is not None else 0,
+        disabled=no_peak,
+        key="riot_peak_tier",
+    )
+    peak_division = pcol2.selectbox(
+        "최고 디비전",
+        list(Division),
+        index=list(Division).index(fetched_snapshot.division) if opgg_peak is not None else 0,
+        disabled=no_peak,
+        key="riot_peak_division",
+    )
     peak_lp = pcol3.number_input(
-        "최고 LP", min_value=0, max_value=3000, value=0, disabled=no_peak, key="riot_peak_lp"
+        "최고 LP",
+        min_value=0,
+        max_value=3000,
+        value=fetched_snapshot.lp if opgg_peak is not None else 0,
+        disabled=no_peak,
+        key="riot_peak_lp",
     )
     peak = None if no_peak else TierSnapshot(peak_tier, peak_division, int(peak_lp))
+
+    peak_achieved_season = None
+    if (
+        opgg_peak is not None
+        and peak is not None
+        and peak.tier == fetched_snapshot.tier
+        and peak.division == fetched_snapshot.division
+        and peak.lp == fetched_snapshot.lp
+    ):
+        peak_achieved_season = fetched_season
 
     seed_tier = None
     seed_division = Division.III
@@ -255,13 +300,15 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
                 reason=seed_reason or None,
                 sub_role=sub_role,
                 recommendation=recommendation,
+                peak_achieved_season=peak_achieved_season,
             )
         except PermissionDeniedError as exc:
             st.error(f"권한이 없습니다: {exc}")
         else:
+            peak_note = f", 최고 티어 출처: OP.GG ({peak_achieved_season})" if peak_achieved_season else ""
             st.success(
                 f"{player.nickname} 추가 완료 (출처: {RATING_SOURCE_LABEL[player.rating_source]}, "
-                f"신뢰도 {player.confidence:.0%})"
+                f"신뢰도 {player.confidence:.0%}{peak_note})"
             )
             del st.session_state["riot_probe"]
             st.rerun()
@@ -347,6 +394,9 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
             recommendation = service.infer_position(puuid)
             main_role = recommendation.main if recommendation else Position.MID
             sub_role = recommendation.sub if recommendation else None
+            opgg_result = service.fetch_peak_from_opgg(game_name, tag_line)
+            peak = opgg_result[0] if opgg_result else None
+            peak_achieved_season = opgg_result[1] if opgg_result else None
 
             try:
                 player = service.register_player(
@@ -354,11 +404,12 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
                     puuid,
                     main_role,
                     current,
-                    peak=None,
+                    peak=peak,
                     actor_role=actor.role,
                     changed_by=actor.display_name,
                     sub_role=sub_role,
                     recommendation=recommendation,
+                    peak_achieved_season=peak_achieved_season,
                 )
             except PermissionDeniedError as exc:
                 failed.append((nickname, f"권한이 없습니다: {exc}"))
@@ -372,7 +423,8 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
                 failed.append((nickname, f"등록 실패 (이미 존재하는 참가자일 수 있음): {exc}"))
                 continue
 
-            added.append(f"{player.nickname} ({RATING_SOURCE_LABEL[player.rating_source]})")
+            peak_note = f", 최고 티어 출처: OP.GG ({peak_achieved_season})" if peak_achieved_season else ""
+            added.append(f"{player.nickname} ({RATING_SOURCE_LABEL[player.rating_source]}{peak_note})")
 
         del st.session_state["bulk_riot_ocr"]
 
@@ -408,7 +460,9 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
         )
         new_sub_role = _sub_role_selectbox("부 포지션 (선택)", key="edit_sub_role", default=target.sub_role)
 
-        st.caption("최고 티어 (참고용 메타데이터)")
+        st.caption("최고 티어 - 현재 티어와 200점 이상 차이 나면 base rating 계산에 가중 반영됩니다.")
+        if target.peak_achieved_season:
+            st.caption(f"현재 저장된 값의 출처: OP.GG ({target.peak_achieved_season}) - 아래 값을 직접 바꾸면 이 출처 표시는 사라집니다.")
         no_peak = st.checkbox("최고 티어 정보 없음", value=target.peak_tier is None, key="edit_no_peak")
         pcol1, pcol2, pcol3 = st.columns(3)
         new_peak_tier = pcol1.selectbox(
@@ -477,6 +531,19 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
         do_delete = col_delete.form_submit_button("삭제")
 
         if do_update:
+            new_peak_snapshot = (
+                None if no_peak else (new_peak_tier, new_peak_division, int(new_peak_lp))
+            )
+            old_peak_snapshot = (
+                None
+                if target.peak_tier is None
+                else (target.peak_tier, target.peak_division, target.peak_lp)
+            )
+            # A manual edit that changes the peak values invalidates any
+            # OP.GG-sourced season label - unchanged values keep it.
+            peak_achieved_season = (
+                target.peak_achieved_season if new_peak_snapshot == old_peak_snapshot else None
+            )
             try:
                 if is_seed:
                     # Seed Rating changes always go through set_seed_rating() so
@@ -499,6 +566,7 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
                             "peak_tier": None if no_peak else new_peak_tier,
                             "peak_division": None if no_peak else new_peak_division,
                             "peak_lp": None if no_peak else int(new_peak_lp),
+                            "peak_achieved_season": peak_achieved_season,
                             "main_role": new_main_role,
                             "sub_role": new_sub_role,
                         }
@@ -513,6 +581,7 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
                             "peak_tier": None if no_peak else new_peak_tier,
                             "peak_division": None if no_peak else new_peak_division,
                             "peak_lp": None if no_peak else int(new_peak_lp),
+                            "peak_achieved_season": peak_achieved_season,
                             "main_role": new_main_role,
                             "sub_role": new_sub_role,
                             "rating_source": RatingSource.MANUAL,

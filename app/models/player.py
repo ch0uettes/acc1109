@@ -34,6 +34,15 @@ class Player(BaseModel):
     what Riot's match-history analysis suggested at registration time.
     They seed `main_role`/`sub_role` once, then become reference-only.
 
+    `peak_achieved_season` is which season `peak_tier` was reached in (e.g.
+    "S2024 S2"), when known - only ever populated by an OP.GG season-history
+    lookup (see app/opgg/client.py), never by hand, since a manually-entered
+    peak has no reliable "when" to attach. None whenever peak_tier came from
+    manual entry, or wasn't set at all. Currently informational/storage-only
+    - reserved for a planned refinement to blend_current_and_peak's weighting
+    that accounts for how long ago the peak was reached, not just how big
+    the current/peak gap is.
+
     `is_active` is a soft-delete flag, never a hard row delete - a Player
     who has ever played a match is referenced by match/rating/vote history
     (see the FK columns on MatchPlayerResult, RatingHistory, Vote, etc.),
@@ -56,6 +65,7 @@ class Player(BaseModel):
     peak_tier: Optional[Tier] = None
     peak_division: Optional[Division] = None
     peak_lp: Optional[int] = None
+    peak_achieved_season: Optional[str] = None
     official_rating: Optional[float] = None
     seed_rating: Optional[float] = None
     rating_source: RatingSource = RatingSource.CURRENT_SEASON

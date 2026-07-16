@@ -15,8 +15,10 @@ from app.models.internal_rating_change import InternalRatingChange
 from app.models.player import Player
 from app.models.season_rank import PlayerSeasonRank
 from app.models.seed_rating_change import SeedRatingChange
+from app.opgg.client import OpggClient, build_opgg_client
 from app.position.analyzer import PositionAnalyzer, RiotHistoryPositionAnalyzer
 from app.position.schemas import RoleRecommendation
+from app.rating.official import OfficialRatingCalculator
 from app.rating.official_strategy import CurrentTierPriorityStrategy, OfficialRatingStrategy
 from app.rating.resolver import RatingCaseResolver, RatingResolution, TierSnapshot, seed_rating_for_tier
 from app.riot.client import RiotAPIClient, build_riot_client
@@ -40,6 +42,7 @@ class PlayerService:
         official_rating_strategy: Optional[OfficialRatingStrategy] = None,
         position_analyzer: Optional[PositionAnalyzer] = None,
         server_repo: Optional[ServerRepository] = None,
+        opgg_client: Optional[OpggClient] = None,
     ) -> None:
         self.server_id = server_id
         self.repo = PlayerRepository(session, server_id)
@@ -50,6 +53,7 @@ class PlayerService:
         self.official_rating_strategy = official_rating_strategy or CurrentTierPriorityStrategy()
         self.riot_client = riot_client or build_riot_client()
         self.position_analyzer = position_analyzer or RiotHistoryPositionAnalyzer(self.riot_client)
+        self.opgg_client = opgg_client or build_opgg_client()
 
     def create_player(self, player: Player, actor_role: Role) -> Player:
         """Manual-entry path: the operator has typed an exact current tier
@@ -64,12 +68,41 @@ class PlayerService:
 
     def probe_current_season(self, game_name: str, tag_line: str) -> tuple[str, Optional[TierSnapshot]]:
         """Riot ID -> PUUID + current-season rank (or None if unranked).
-        Peak Tier is never auto-fetched here - Riot has no historical-peak
-        endpoint - and it's metadata only regardless, never a scoring input."""
+        Peak Tier is never fetched here - Riot's own API has no
+        historical-peak endpoint at all - see fetch_peak_from_opgg() for the
+        actual (best-effort, third-party) source of that data."""
         account = self.riot_client.get_account_by_riot_id(game_name, tag_line)
         rank = self.riot_client.get_rank(account.puuid)
         current = TierSnapshot(rank.tier, rank.division, rank.lp) if rank else None
         return account.puuid, current
+
+    def fetch_peak_from_opgg(self, game_name: str, tag_line: str) -> Optional[tuple[TierSnapshot, str]]:
+        """Best-effort Peak Tier + the season it was reached in, scraped
+        from OP.GG's season-history table (data via OP.GG, https://op.gg -
+        see app/opgg/client.py for the source-attribution/ToS rationale).
+        Returns None whenever there's simply nothing to offer - no season
+        history on OP.GG, the site unreachable, or its page layout having
+        changed underneath the parser - never raises, since this is always
+        optional auto-fill for the operator to confirm/override, never
+        something registration depends on.
+
+        "Peak" is picked by this app's own tier+division+lp scoring
+        formula (OfficialRatingCalculator), not by raw LP or by which
+        season is most recent - a Grandmaster season with modest LP still
+        outscores a more recent Master season with more LP, exactly as it
+        should on this app's unified scale."""
+        try:
+            entries = self.opgg_client.get_season_history(game_name, tag_line)
+        except Exception:  # noqa: BLE001 - a third-party page scrape, deliberately never allowed to
+            # propagate: network errors, HTTP errors, and any parsing surprise from an
+            # OP.GG layout change all mean the same thing to a caller - "nothing to offer".
+            return None
+        if not entries:
+            return None
+
+        calc = OfficialRatingCalculator()
+        best = max(entries, key=lambda e: calc.calculate_from(e.tier, e.division, e.lp))
+        return TierSnapshot(best.tier, best.division, best.lp), best.season
 
     def infer_position(self, puuid: str) -> Optional[RoleRecommendation]:
         """Main/Sub role recommendation from recent ranked match history, or
@@ -91,6 +124,7 @@ class PlayerService:
         reason: Optional[str] = None,
         sub_role: Optional[Position] = None,
         recommendation: Optional[RoleRecommendation] = None,
+        peak_achieved_season: Optional[str] = None,
     ) -> Player:
         """Case 1 (current is not None): Official Rating from Riot data.
         Case 2/3 (current is None): the operator's `seed_tier` (+ optional
@@ -102,7 +136,9 @@ class PlayerService:
         `recommendation` (from infer_position) seeds `main_role`/`sub_role`'s
         permanent reference fields exactly once, here - it's never written
         again after this call, matching the "Riot recommends, Profile
-        decides" priority order."""
+        decides" priority order. `peak_achieved_season` is purely stored
+        metadata alongside `peak` (see fetch_peak_from_opgg) - pass None
+        when `peak` came from manual entry rather than an OP.GG lookup."""
         require_permission(actor_role, Permission.MANAGE_PLAYERS)
         resolver = RatingCaseResolver(self.official_rating_strategy)
         if current is not None:
@@ -116,7 +152,7 @@ class PlayerService:
             resolution = resolver.resolve_seed(seed_tier, peak, seed_division)
 
         player = self._build_player_from_resolution(
-            nickname, puuid, main_role, resolution, sub_role, recommendation
+            nickname, puuid, main_role, resolution, sub_role, recommendation, peak_achieved_season
         )
         saved = self.repo.add(player)
         self._record_season_snapshot(saved)
@@ -273,6 +309,7 @@ class PlayerService:
         resolution: RatingResolution,
         sub_role: Optional[Position] = None,
         recommendation: Optional[RoleRecommendation] = None,
+        peak_achieved_season: Optional[str] = None,
     ) -> Player:
         return Player(
             nickname=nickname,
@@ -283,6 +320,7 @@ class PlayerService:
             peak_tier=resolution.peak_tier,
             peak_division=resolution.peak_division,
             peak_lp=resolution.peak_lp,
+            peak_achieved_season=peak_achieved_season,
             official_rating=resolution.official_rating,
             seed_rating=resolution.seed_rating,
             rating_source=resolution.rating_source,
