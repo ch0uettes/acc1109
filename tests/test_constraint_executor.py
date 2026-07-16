@@ -212,6 +212,33 @@ def test_context_factory_deep_copies_players_so_plugin_mutation_cant_leak_into_l
     assert live_team.slots[0].player.nickname == "live1"  # the live Player is untouched
 
 
+def test_resolve_defaults_to_hard_enforcing_a_match_override():
+    from app.position.schemas import RolePreference
+    from app.utils.enums import Position
+
+    players = [_player(i) for i in range(5)]
+    signups = [PlayerSignup(player=players[0], match_override=RolePreference(main=Position.SUPPORT))] + [
+        PlayerSignup(player=p) for p in players[1:]
+    ]
+    _, _, override_player_ids = TeamBalancer()._resolve(signups)
+    assert override_player_ids == frozenset({players[0].id})
+
+
+def test_resolve_leaves_override_soft_when_enforce_fixed_role_is_false():
+    from app.position.schemas import RolePreference
+    from app.utils.enums import Position
+
+    players = [_player(i) for i in range(5)]
+    signups = [
+        PlayerSignup(
+            player=players[0], match_override=RolePreference(main=Position.SUPPORT), enforce_fixed_role=False
+        )
+    ] + [PlayerSignup(player=p) for p in players[1:]]
+    _, preferences, override_player_ids = TeamBalancer()._resolve(signups)
+    assert override_player_ids == frozenset()  # not hard-enforced
+    assert preferences[players[0].id].main == Position.SUPPORT  # still used as a soft preference
+
+
 def test_backtracking_search_engine_forwards_constraint_priorities_to_executor():
     engine = BacktrackingSearchEngine(constraint_priorities={"fixed_role": 999})
     players = [_player(i) for i in range(5)]

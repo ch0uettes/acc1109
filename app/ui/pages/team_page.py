@@ -59,10 +59,17 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
     selected_labels = st.multiselect("참가자 선택 (5명 단위)", list(options.keys()))
     selected = [options[label] for label in selected_labels]
 
-    overrides = _render_match_overrides(selected)
+    overrides, enforce_fixed = _render_match_overrides(selected)
 
     if st.button("팀 생성", disabled=len(selected) == 0):
-        signups = [PlayerSignup(player=p, match_override=overrides.get(p.id)) for p in selected]
+        signups = [
+            PlayerSignup(
+                player=p,
+                match_override=overrides.get(p.id),
+                enforce_fixed_role=enforce_fixed.get(p.id, True),
+            )
+            for p in selected
+        ]
         try:
             context = team_service.run(signups, k=3)
         except InvalidPlayerCountError as exc:
@@ -161,13 +168,18 @@ def _render_combo(result) -> None:
                     )
 
 
-def _render_match_overrides(selected: list) -> dict[int, RolePreference]:
+def _render_match_overrides(selected: list) -> tuple[dict[int, RolePreference], dict[int, bool]]:
     """Optional this-match-only Main/Sub override per selected player -
     never touches the Player's Profile, only affects this one balancer
-    run (see RolePreferenceManager's priority order)."""
+    run (see RolePreferenceManager's priority order). Also returns which
+    of those overrides should be hard-enforced (PlayerSignup.
+    enforce_fixed_role) versus left as a soft preference the search can
+    still trade off against - see FixedRoleConstraint for what "hard"
+    means here."""
     overrides: dict[int, RolePreference] = {}
+    enforce_fixed: dict[int, bool] = {}
     if not selected:
-        return overrides
+        return overrides, enforce_fixed
 
     with st.expander("이번 내전 전용 포지션 (선택)"):
         st.caption("체크하지 않으면 프로필의 주/부 포지션이 그대로 사용됩니다.")
@@ -190,5 +202,14 @@ def _render_match_overrides(selected: list) -> dict[int, RolePreference]:
             overrides[player.id] = RolePreference(
                 main=override_main, sub=None if sub_choice == NO_SUB_ROLE else sub_choice
             )
+            enforce_fixed[player.id] = st.checkbox(
+                "이 포지션을 반드시 배정 (Fixed Role 강제)",
+                value=True,
+                key=f"override_fixed_{player.id}",
+                help=(
+                    "체크 시: 이 포지션을 못 받는 조합은 아예 후보에서 제외됩니다 (Hard 제약). "
+                    "체크 해제 시: 참고용 힌트로만 쓰이고, 탐색 결과에 따라 다른 포지션이 배정될 수 있습니다."
+                ),
+            )
 
-    return overrides
+    return overrides, enforce_fixed

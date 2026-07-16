@@ -183,13 +183,18 @@ class TeamBalancer:
             signup.player.id: self.preference_manager.resolve(signup.player, signup.match_override)
             for signup in signups
         }
-        # Player ids with an explicit this-match override, as opposed to
-        # just their stored profile main/sub role - RolePreferenceManager
-        # already collapsed that distinction into `preferences` above, so
-        # this has to be captured separately for FixedRoleConstraint (see
-        # app/balance/constraint_engine/plugins/role.py) to know which
-        # players actually need their position hard-enforced.
+        # Player ids with an explicit this-match override that the operator
+        # also asked to hard-enforce (PlayerSignup.enforce_fixed_role,
+        # default True) - as opposed to just their stored profile main/sub
+        # role, or an override left as a soft hint. RolePreferenceManager
+        # already collapsed the override/profile distinction into
+        # `preferences` above, so this has to be captured separately for
+        # FixedRoleConstraint (see app/balance/constraint_engine/plugins/
+        # role.py) to know which players actually need their position
+        # hard-enforced.
         override_player_ids = frozenset(
-            signup.player.id for signup in signups if signup.match_override is not None
+            signup.player.id
+            for signup in signups
+            if signup.match_override is not None and signup.enforce_fixed_role
         )
         return players, preferences, override_player_ids
