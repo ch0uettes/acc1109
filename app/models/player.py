@@ -26,7 +26,18 @@ class Player(BaseModel):
     editable at any time - `recommended_main_role`/`recommended_sub_role`
     (+ their confidences) are a permanent, never-overwritten record of
     what Riot's match-history analysis suggested at registration time.
-    They seed `main_role`/`sub_role` once, then become reference-only."""
+    They seed `main_role`/`sub_role` once, then become reference-only.
+
+    `is_active` is a soft-delete flag, never a hard row delete - a Player
+    who has ever played a match is referenced by match/rating/vote history
+    (see the FK columns on MatchPlayerResult, RatingHistory, Vote, etc.),
+    none of which cascade, so hard-deleting them would either orphan those
+    rows (SQLite, which doesn't enforce FKs by default) or raise an
+    uncaught IntegrityError on any real Postgres deployment (Supabase).
+    Deactivating instead just excludes them from PlayerService.
+    list_players()'s default (active-only) result - team generation and
+    the participant list stop offering them - while every historical
+    record they're part of stays fully intact and still resolvable by id."""
 
     id: Optional[int] = None
     server_id: Optional[int] = None
@@ -54,6 +65,7 @@ class Player(BaseModel):
     champion_pool: list[str] = Field(default_factory=list)
     confidence: float = 0.5
     games_played: int = 0
+    is_active: bool = True
 
     @model_validator(mode="after")
     def _sub_role_must_differ_from_main(self) -> "Player":

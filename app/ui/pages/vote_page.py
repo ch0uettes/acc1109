@@ -19,7 +19,13 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
         st.info("투표 대기 중인 경기가 없습니다.")
         return
 
-    players_by_id = {p.id: p for p in PlayerService(session, server_id).list_players()}
+    # include_inactive=True: a match's participants can include a player
+    # who has since been deactivated - voting/display for that past match
+    # shouldn't lose their name just because they can't be picked for new
+    # team generation anymore.
+    players_by_id = {
+        p.id: p for p in PlayerService(session, server_id).list_players(include_inactive=True)
+    }
 
     def _match_label(m) -> str:
         ai_mvp = players_by_id.get(m.ai_mvp_player_id)

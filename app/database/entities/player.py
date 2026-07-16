@@ -43,5 +43,6 @@ class PlayerEntity(Base):
     champion_pool: Mapped[list[str]] = mapped_column(JSON, default=list)
     confidence: Mapped[float] = mapped_column(default=0.5)
     games_played: Mapped[int] = mapped_column(default=0)
+    is_active: Mapped[Optional[bool]] = mapped_column(nullable=True, default=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)

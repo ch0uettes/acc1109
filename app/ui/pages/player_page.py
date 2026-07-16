@@ -411,9 +411,11 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
 
         if do_delete:
             try:
-                service.delete_player(target.id, actor_role=actor.role)
+                service.deactivate_player(target.id, actor_role=actor.role)
             except PermissionDeniedError as exc:
                 st.error(f"권한이 없습니다: {exc}")
+            except AppError as exc:
+                st.error(str(exc))
             else:
-                st.success(f"{target.nickname} 삭제 완료")
+                st.success(f"{target.nickname} 삭제 완료 (경기/레이팅 이력은 보존됩니다)")
                 st.rerun()

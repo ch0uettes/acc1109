@@ -317,8 +317,8 @@ class PlayerService:
     def get_player(self, player_id: int) -> Player:
         return self.repo.get(player_id)
 
-    def list_players(self) -> list[Player]:
-        return self.repo.list()
+    def list_players(self, include_inactive: bool = False) -> list[Player]:
+        return self.repo.list(include_inactive=include_inactive)
 
     def season_rank_history(self, player_id: int) -> list[PlayerSeasonRank]:
         return self.season_rank_repo.list_for_player(player_id)
@@ -333,6 +333,19 @@ class PlayerService:
         self._record_season_snapshot(saved)
         return saved
 
-    def delete_player(self, player_id: int, actor_role: Role) -> None:
+    def deactivate_player(self, player_id: int, actor_role: Role) -> Player:
+        """The "삭제" button's actual action - soft delete, not a row
+        DELETE. A hard delete would either orphan match/rating/vote rows
+        (SQLite, no FK enforcement by default) or raise an uncaught
+        IntegrityError on a real Postgres deployment (Supabase) for any
+        player who has ever played a match, since none of those FKs
+        cascade. Deactivating just drops them from list_players()'s
+        default result, so they stop being offered for new team
+        generation, while their entire history stays intact and
+        resolvable by id."""
         require_permission(actor_role, Permission.MANAGE_PLAYERS)
-        self.repo.delete(player_id)
+        return self.repo.set_active(player_id, False)
+
+    def reactivate_player(self, player_id: int, actor_role: Role) -> Player:
+        require_permission(actor_role, Permission.MANAGE_PLAYERS)
+        return self.repo.set_active(player_id, True)

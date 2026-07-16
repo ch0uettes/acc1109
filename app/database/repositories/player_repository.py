@@ -37,6 +37,7 @@ def _to_domain(entity: PlayerEntity) -> Player:
         champion_pool=list(entity.champion_pool or []),
         confidence=entity.confidence,
         games_played=entity.games_played,
+        is_active=entity.is_active if entity.is_active is not None else True,
     )
 
 
@@ -65,6 +66,7 @@ def _apply_domain(entity: PlayerEntity, player: Player) -> None:
     entity.champion_pool = list(player.champion_pool)
     entity.confidence = player.confidence
     entity.games_played = player.games_played
+    entity.is_active = player.is_active
 
 
 class PlayerRepository(BaseRepository[PlayerEntity]):
@@ -99,9 +101,13 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
         )
         return _to_domain(entity) if entity else None
 
-    def list(self) -> list[Player]:
-        entities = self.session.query(PlayerEntity).filter(PlayerEntity.server_id == self.server_id).all()
-        return [_to_domain(e) for e in entities]
+    def list(self, include_inactive: bool = False) -> list[Player]:
+        query = self.session.query(PlayerEntity).filter(PlayerEntity.server_id == self.server_id)
+        if not include_inactive:
+            # NULL means "never touched, so still active" for rows that
+            # predate this column - only an explicit False excludes.
+            query = query.filter(PlayerEntity.is_active.isnot(False))
+        return [_to_domain(e) for e in query.all()]
 
     def update(self, player: Player) -> Player:
         if player.id is None:
@@ -126,8 +132,14 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
             entity.calibration_mode = False
         self.session.commit()
 
-    def delete(self, player_id: int) -> None:
+    def set_active(self, player_id: int, is_active: bool) -> Player:
+        """Soft delete/restore - never a hard row delete, see Player.is_active
+        for why (match/rating/vote history references this row without any
+        cascade)."""
         entity = self._get_entity(player_id)
         if entity is None or entity.server_id != self.server_id:
             raise PlayerNotFoundError(f"Player {player_id} not found")
-        self._delete_entity(entity)
+        entity.is_active = is_active
+        self.session.commit()
+        self.session.refresh(entity)
+        return _to_domain(entity)
