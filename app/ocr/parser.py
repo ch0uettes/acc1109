@@ -4,7 +4,7 @@ import re
 from difflib import get_close_matches
 from typing import Optional
 
-from app.ocr.schemas import OCRPlayerRow
+from app.ocr.schemas import OCRPlayerRow, OCRRiotIdRow
 
 # EasyOCR row grouping: LoL's end-game table lines are evenly spaced, so
 # nearby detections are clustered into one row using a tolerance sized as a
@@ -31,6 +31,12 @@ STAT_LABELS: dict[str, str] = {
     "damage": "챔피언에게 가한 피해량",
     "gold": "골드 획득",
 }
+
+# Riot ID tags are short alphanumeric region/custom codes (e.g. "KR1",
+# "NA1", "1234") - never containing '#' themselves, so once a detection is
+# split on the first '#' the remainder up to the first run of non-tag
+# characters is the tag.
+_RIOT_TAG_PATTERN = re.compile(r"[A-Za-z0-9]{2,6}")
 
 Detection = tuple[list[list[float]], str, float]
 
@@ -134,6 +140,81 @@ def parse_rows_into_players(
             )
         )
     return player_rows
+
+
+def _split_riot_id(text: str) -> Optional[tuple[Optional[str], str]]:
+    """(game_name, tag_line) if `text` contains a '#'-delimited Riot ID,
+    else None. `game_name` is None (not empty string) when the '#' sat at
+    the very start of this box's text - OCR sometimes detects the game
+    name and the "#TAG" suffix as two separate boxes when there's a visible
+    gap before the '#', and the caller falls back to the previous box's
+    text in that case. Only ever called on ONE detection box's own text,
+    never a whole row's concatenated text, so a non-None `game_name` is
+    exactly what OCR put on that one box, never contaminated by a
+    neighboring box's content."""
+    if "#" not in text:
+        return None
+    game_name, _, remainder = text.partition("#")
+    tag_match = _RIOT_TAG_PATTERN.match(remainder.strip())
+    if not tag_match:
+        return None
+    game_name = game_name.strip() or None
+    return game_name, tag_match.group(0)
+
+
+def parse_rows_into_riot_ids(rows: list[list[tuple[float, str]]]) -> list[OCRRiotIdRow]:
+    """Row -> OCRRiotIdRow, for a participant-roster screenshot (nickname +
+    Riot ID per row) rather than a match scoreboard. Only rows containing a
+    '#' are kept - anything else (headers, blank lines, unrelated text) is
+    silently skipped, so this tolerates an arbitrary screenshot layout as
+    long as nickname and Riot ID share one visual row.
+
+    The Riot ID's own game_name is read from whichever single detection box
+    actually contains the '#' - never guessed by splitting the row's full
+    concatenated text, which would have no reliable boundary between an
+    adjacent nickname and the game name. Every other box on the row is
+    treated as nickname text; if none remain, the game_name itself doubles
+    as the nickname guess (the common case where the operator's display
+    name and Riot ID's game name are the same)."""
+    riot_id_rows: list[OCRRiotIdRow] = []
+
+    for row in rows:
+        riot_id = None
+        tag_box_index = None
+        for i, (_, text) in enumerate(row):
+            riot_id = _split_riot_id(text)
+            if riot_id is not None:
+                tag_box_index = i
+                break
+        if riot_id is None:
+            continue
+
+        game_name, tag_line = riot_id
+        game_name_box_index = tag_box_index
+        if game_name is None:
+            # '#TAG' was its own box - the game name is whatever OCR put in
+            # the box immediately before it, if any.
+            if tag_box_index == 0:
+                continue
+            game_name = row[tag_box_index - 1][1].strip()
+            if not game_name:
+                continue
+            game_name_box_index = tag_box_index - 1
+
+        excluded = {tag_box_index, game_name_box_index}
+        other_texts = [text for i, (_, text) in enumerate(row) if i not in excluded]
+        nickname = " ".join(t.strip() for t in other_texts if t.strip()) or game_name
+
+        riot_id_rows.append(
+            OCRRiotIdRow(
+                nickname=nickname,
+                game_name=game_name,
+                tag_line=tag_line,
+                raw_text=_row_text(row),
+            )
+        )
+
+    return riot_id_rows
 
 
 def detect_winning_team(rows: list[list[tuple[float, str]]]) -> Optional[int]:

@@ -5,6 +5,7 @@ from app.ocr.parser import (
     detect_winning_team,
     extract_detail_stats,
     parse_rows_into_players,
+    parse_rows_into_riot_ids,
 )
 
 
@@ -176,3 +177,60 @@ def test_extract_detail_stats_reads_cs_row_by_label_prefix():
 
     assert stats["cs"] == [39, 68, 94, 18, 23, 43, 63, 17, 35, 60]
     assert stats["damage"] == [76904, 38673, 125598, 25310, 24103, 43984, 51485, 18722, 32756, 68726]
+
+
+# --- parse_rows_into_riot_ids: participant-roster (nickname + Riot ID) screenshots ---
+
+
+def test_parse_riot_ids_splits_nickname_and_riot_id_in_separate_boxes():
+    rows = [
+        [(0, "임도현"), (100, "Hideonbush#KR1")],
+        [(0, "정하민"), (100, "Faker#KR2")],
+    ]
+
+    parsed = parse_rows_into_riot_ids(rows)
+
+    assert len(parsed) == 2
+    assert parsed[0].nickname == "임도현"
+    assert parsed[0].game_name == "Hideonbush"
+    assert parsed[0].tag_line == "KR1"
+    assert parsed[1].nickname == "정하민"
+    assert parsed[1].game_name == "Faker"
+    assert parsed[1].tag_line == "KR2"
+
+
+def test_parse_riot_ids_recovers_game_name_split_across_a_space_before_hash():
+    # OCR sometimes detects "Hide on bush" and "#KR1" as two separate boxes
+    # when there's a visible gap before the '#'.
+    rows = [[(0, "임도현"), (100, "Hide on bush"), (250, "#KR1")]]
+
+    parsed = parse_rows_into_riot_ids(rows)
+
+    assert len(parsed) == 1
+    assert parsed[0].nickname == "임도현"
+    assert parsed[0].game_name == "Hide on bush"
+    assert parsed[0].tag_line == "KR1"
+
+
+def test_parse_riot_ids_defaults_nickname_to_game_name_when_no_other_box():
+    rows = [[(0, "Hideonbush#KR1")]]
+
+    parsed = parse_rows_into_riot_ids(rows)
+
+    assert len(parsed) == 1
+    assert parsed[0].nickname == "Hideonbush"
+    assert parsed[0].game_name == "Hideonbush"
+    assert parsed[0].tag_line == "KR1"
+
+
+def test_parse_riot_ids_skips_rows_without_a_hash():
+    rows = [
+        [(0, "참가자 명단")],
+        [(0, "임도현"), (100, "Hideonbush#KR1")],
+        [(0, "")],
+    ]
+
+    parsed = parse_rows_into_riot_ids(rows)
+
+    assert len(parsed) == 1
+    assert parsed[0].nickname == "임도현"

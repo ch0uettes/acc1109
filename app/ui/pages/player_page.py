@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
+import pandas as pd
 import requests
 import streamlit as st
 from sqlalchemy.orm import Session
 
 from app.models.player import Player
 from app.models.server_membership import ServerMembership
+from app.ocr.extractor import build_ocr_extractor
 from app.rating.official import master_stage_from
 from app.rating.resolver import TierSnapshot
 from app.services.player_service import PlayerService
@@ -52,13 +57,16 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
     st.header("참가자 관리")
     service = PlayerService(session, server_id)
 
-    tab_manual, tab_riot = st.tabs(["수동 입력", "Riot ID로 자동 조회"])
+    tab_manual, tab_riot, tab_bulk = st.tabs(["수동 입력", "Riot ID로 자동 조회", "스크린샷으로 일괄 등록"])
 
     with tab_manual:
         _render_manual_tab(service, actor)
 
     with tab_riot:
         _render_riot_tab(service, actor)
+
+    with tab_bulk:
+        _render_bulk_ocr_tab(service, actor)
 
     st.subheader("참가자 목록")
     players = service.list_players()
@@ -257,6 +265,126 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
             )
             del st.session_state["riot_probe"]
             st.rerun()
+
+
+def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> None:
+    """Bulk version of _render_riot_tab: one screenshot containing a whole
+    roster's nickname + Riot ID (game#tag) per row, instead of typing each
+    player in one at a time. Same "OCR gives a first draft, human reviews
+    before anything is saved" contract as match_page.py's screenshot flow -
+    the extracted table is always editable before the actual Riot lookups/
+    registrations run.
+
+    Only auto-registers players who have a current-season rank (Official
+    Rating - no operator judgment required). An unranked player needs an
+    operator's own Seed Rating judgment (see PlayerService.register_player's
+    seed_tier requirement) - guessing that automatically for a whole batch
+    would violate this app's core rule that skill is never self-reported
+    and never silently assumed, so those rows are reported back for manual
+    handling via the other two tabs instead of being registered here."""
+    st.caption(
+        "닉네임과 라이엇 아이디(태그 포함)가 함께 보이는 참가자 명단 스크린샷을 업로드하면 "
+        "OCR로 읽어 표로 보여줍니다. 표에서 확인/수정 후 일괄 등록하세요."
+    )
+    uploaded = st.file_uploader(
+        "참가자 명단 스크린샷 업로드", type=["png", "jpg", "jpeg"], key="bulk_riot_uploader"
+    )
+
+    if uploaded is not None and st.button("스크린샷 분석", key="bulk_riot_analyze"):
+        with tempfile.NamedTemporaryFile(suffix=Path(uploaded.name).suffix, delete=False) as tmp:
+            tmp.write(uploaded.getvalue())
+            tmp_path = tmp.name
+
+        try:
+            with st.spinner("닉네임/라이엇 아이디 인식 중..."):
+                extractor = build_ocr_extractor()
+                rows = extractor.extract_riot_ids(tmp_path)
+        except NotImplementedError as exc:
+            st.error(str(exc))
+        else:
+            if not rows:
+                st.warning("스크린샷에서 '이름#태그' 형태의 라이엇 아이디를 찾지 못했습니다.")
+            st.session_state["bulk_riot_ocr"] = [row.model_dump() for row in rows]
+
+    parsed_rows = st.session_state.get("bulk_riot_ocr")
+    if not parsed_rows:
+        return
+
+    st.caption("파싱 결과 - 닉네임/게임 이름/태그가 잘못 읽혔다면 직접 고쳐주세요. 필요 없는 행은 삭제해도 됩니다.")
+    edited = st.data_editor(
+        pd.DataFrame(parsed_rows)[["nickname", "game_name", "tag_line"]],
+        num_rows="dynamic",
+        key="bulk_riot_edit_table",
+        use_container_width=True,
+    )
+
+    if st.button("일괄 조회 및 추가", key="bulk_riot_confirm_add"):
+        added: list[str] = []
+        needs_manual: list[str] = []
+        failed: list[tuple[str, str]] = []
+
+        for _, row in edited.iterrows():
+            nickname = str(row.get("nickname") or "").strip()
+            game_name = str(row.get("game_name") or "").strip()
+            tag_line = str(row.get("tag_line") or "").strip()
+            if not (nickname and game_name and tag_line):
+                failed.append((nickname or game_name or "(빈 행)", "닉네임/게임 이름/태그 중 비어 있는 값이 있습니다"))
+                continue
+
+            try:
+                puuid, current = service.probe_current_season(game_name, tag_line)
+            except NotImplementedError as exc:
+                failed.append((nickname, str(exc)))
+                continue
+            except requests.HTTPError as exc:
+                failed.append((nickname, f"Riot API 조회 실패: {exc}"))
+                continue
+
+            if current is None:
+                needs_manual.append(nickname)
+                continue
+
+            recommendation = service.infer_position(puuid)
+            main_role = recommendation.main if recommendation else Position.MID
+            sub_role = recommendation.sub if recommendation else None
+
+            try:
+                player = service.register_player(
+                    nickname,
+                    puuid,
+                    main_role,
+                    current,
+                    peak=None,
+                    actor_role=actor.role,
+                    changed_by=actor.display_name,
+                    sub_role=sub_role,
+                    recommendation=recommendation,
+                )
+            except PermissionDeniedError as exc:
+                failed.append((nickname, f"권한이 없습니다: {exc}"))
+                continue
+            except AppError as exc:
+                failed.append((nickname, str(exc)))
+                continue
+            except Exception as exc:  # noqa: BLE001 - a duplicate nickname/puuid/discord_id
+                # raises a raw IntegrityError (unique constraint), not an
+                # AppError - one bad row must not abort the whole batch.
+                failed.append((nickname, f"등록 실패 (이미 존재하는 참가자일 수 있음): {exc}"))
+                continue
+
+            added.append(f"{player.nickname} ({RATING_SOURCE_LABEL[player.rating_source]})")
+
+        del st.session_state["bulk_riot_ocr"]
+
+        if added:
+            st.success(f"{len(added)}명 추가 완료: " + ", ".join(added))
+        if needs_manual:
+            st.warning(
+                f"{len(needs_manual)}명은 현재 시즌 언랭이라 운영자 판단(Seed Rating)이 필요합니다 - "
+                "'Riot ID로 자동 조회' 탭에서 개별 등록해주세요: " + ", ".join(needs_manual)
+            )
+        if failed:
+            st.error("등록 실패:\n" + "\n".join(f"- {name}: {reason}" for name, reason in failed))
 
 
 def _render_edit_delete(service: PlayerService, players: list[Player], actor: ServerMembership) -> None:

@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from app.ocr.parser import cluster_rows, detect_winning_team, extract_detail_stats, parse_rows_into_players
-from app.ocr.schemas import MatchResultData
+from app.ocr.parser import (
+    cluster_rows,
+    detect_winning_team,
+    extract_detail_stats,
+    parse_rows_into_players,
+    parse_rows_into_riot_ids,
+)
+from app.ocr.schemas import MatchResultData, OCRRiotIdRow
 
 
 class OCRExtractor(ABC):
@@ -22,6 +28,12 @@ class OCRExtractor(ABC):
         is not guaranteed to match extract()'s row order - the returned
         "kda" list is the join key the caller should match participants on."""
 
+    @abstractmethod
+    def extract_riot_ids(self, image_path: str) -> list[OCRRiotIdRow]:
+        """Reads a participant-roster screenshot (nickname + Riot ID per
+        row) for bulk player registration - see player_page.py's "스크린샷
+        으로 일괄 등록" tab. Unrelated to the match-scoreboard extract()."""
+
 
 class NotImplementedOCRExtractor(OCRExtractor):
     def extract(self, image_path: str, known_nicknames: list[str]) -> MatchResultData:
@@ -30,6 +42,11 @@ class NotImplementedOCRExtractor(OCRExtractor):
         )
 
     def extract_detail_stats(self, image_path: str) -> dict[str, list]:
+        raise NotImplementedError(
+            "OCR is not available - install 'easyocr' (pip install -r requirements.txt) to enable it"
+        )
+
+    def extract_riot_ids(self, image_path: str) -> list[OCRRiotIdRow]:
         raise NotImplementedError(
             "OCR is not available - install 'easyocr' (pip install -r requirements.txt) to enable it"
         )
@@ -75,6 +92,10 @@ class EasyOCRExtractor(OCRExtractor):
     def extract_detail_stats(self, image_path: str) -> dict[str, list]:
         rows, _raw_text = self._read_rows(image_path)
         return extract_detail_stats(rows)
+
+    def extract_riot_ids(self, image_path: str) -> list[OCRRiotIdRow]:
+        rows, _raw_text = self._read_rows(image_path)
+        return parse_rows_into_riot_ids(rows)
 
 
 def build_ocr_extractor() -> OCRExtractor:

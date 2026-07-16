@@ -31,3 +31,16 @@ class MatchResultData(BaseModel):
     participants: list[OCRPlayerRow]
     winning_team_index: Optional[int]
     raw_text: str
+
+
+class OCRRiotIdRow(BaseModel):
+    """One parsed row from a participant-roster screenshot (nickname +
+    Riot ID). Same "best-effort, always shown for review before use" contract
+    as OCRPlayerRow - `game_name`/`tag_line` feed straight into
+    PlayerService.probe_current_season(), so a misread here would otherwise
+    silently look up the wrong Riot account."""
+
+    nickname: str
+    game_name: str
+    tag_line: str
+    raw_text: str
