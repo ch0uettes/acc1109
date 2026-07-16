@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from app.models.player import Player
 from app.rating.base import RatingCalculator
 from app.utils.enums import Division, Tier
@@ -30,10 +32,32 @@ DIVISION_OFFSET: dict[Division, float] = {
 
 MASTER_STAGE_STEP = 300
 
-# When a player has no current-season tier and Peak Tier substitutes for it,
-# the peak rating is discounted since the player may not have touched the
-# game in a while. See OfficialRatingStrategy.peak_only_decay.
-PAST_SEASON_DECAY_FACTOR = 0.95
+# Official Rating's current-tier-vs-peak-tier structure: a current tier at
+# or near Peak Tier is trusted as-is (an in-form player's current rank IS
+# their skill read, full stop). Only once the gap reaches
+# PEAK_BLEND_GAP_THRESHOLD does Peak Tier get pulled in - the player may be
+# rusty/returning rather than genuinely weaker now, so a still-recent Peak
+# Tier deserves a real say rather than being ignored entirely.
+PEAK_BLEND_GAP_THRESHOLD = 200.0
+PEAK_BLEND_CURRENT_WEIGHT = 0.65
+PEAK_BLEND_PEAK_WEIGHT = 0.35
+
+
+def blend_current_and_peak(current_score: float, peak_score: Optional[float]) -> float:
+    """current_score alone when there's no Peak Tier reading, or when
+    current is at/above Peak Tier, or the gap is under
+    PEAK_BLEND_GAP_THRESHOLD (peak-tier score minus current-tier score -
+    signed, not absolute: a player currently *exceeding* their recorded
+    peak should never be dragged down by a stale/lower peak entry, only a
+    player sitting well *below* their peak gets the blend). Once the gap
+    reaches the threshold, PEAK_BLEND_CURRENT_WEIGHT/PEAK_BLEND_PEAK_WEIGHT
+    weighted sum of the two scores instead."""
+    if peak_score is None:
+        return current_score
+    gap = peak_score - current_score
+    if gap < PEAK_BLEND_GAP_THRESHOLD:
+        return current_score
+    return PEAK_BLEND_CURRENT_WEIGHT * current_score + PEAK_BLEND_PEAK_WEIGHT * peak_score
 
 
 class OfficialRatingCalculator(RatingCalculator):

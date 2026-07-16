@@ -19,16 +19,39 @@ def test_resolve_current_season_uses_tier_score_and_high_confidence():
     assert resolution.calibration_mode is False
 
 
-def test_resolve_current_season_carries_peak_as_metadata_only():
+def test_resolve_current_season_uses_current_alone_when_peak_is_near():
     resolver = RatingCaseResolver()
-    current = TierSnapshot(Tier.PLATINUM, Division.II, 0)
-    peak = TierSnapshot(Tier.DIAMOND, Division.IV, 0)
+    # gap = (2400+0) - (1600+200) = 600... too far apart for this test's
+    # intent, so use a genuinely *near* peak instead (gap < 200).
+    current = TierSnapshot(Tier.PLATINUM, Division.II, 50)  # 1600+200+50=1850
+    peak = TierSnapshot(Tier.PLATINUM, Division.I, 0)  # 1600+300+0=1900, gap=50
 
     resolution = resolver.resolve_current_season(current, peak)
 
-    # peak must never influence official_rating - it's metadata only
-    assert resolution.official_rating == 1600 + 200
+    assert resolution.official_rating == 1850
+    assert resolution.peak_tier == Tier.PLATINUM
+
+
+def test_resolve_current_season_blends_toward_peak_once_the_gap_is_wide():
+    resolver = RatingCaseResolver()
+    current = TierSnapshot(Tier.PLATINUM, Division.II, 0)  # 1600+200+0=1800
+    peak = TierSnapshot(Tier.DIAMOND, Division.IV, 0)  # 2400+0+0=2400, gap=600
+
+    resolution = resolver.resolve_current_season(current, peak)
+
+    assert resolution.official_rating == pytest.approx(0.65 * 1800 + 0.35 * 2400)
     assert resolution.peak_tier == Tier.DIAMOND
+
+
+def test_resolve_current_season_never_blends_toward_a_lower_peak():
+    resolver = RatingCaseResolver()
+    # current now exceeds a stale/lower peak entry - must not be dragged down.
+    current = TierSnapshot(Tier.DIAMOND, Division.IV, 0)  # 2400
+    peak = TierSnapshot(Tier.PLATINUM, Division.II, 0)  # 1800, gap=-600
+
+    resolution = resolver.resolve_current_season(current, peak)
+
+    assert resolution.official_rating == 2400
 
 
 def test_resolve_manual_computes_official_rating_with_manual_confidence():

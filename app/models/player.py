@@ -11,10 +11,16 @@ class Player(BaseModel):
     """Domain representation of an inhouse participant.
 
     `tier`/`division`/`lp` are the *current season* values (UNRANKED if
-    Riot has no current-season rank for them). `peak_tier` is independent
-    metadata only - the highest tier ever reached - and never feeds into
-    any rating computation; it exists purely as a future ML feature (e.g.
-    current << peak suggests a returning player).
+    Riot has no current-season rank for them). `peak_tier` is the highest
+    tier ever reached - mostly informational, but it does have one real
+    scoring effect: when Official Rating is computed from a current-season
+    tier, a wide-enough gap below `peak_tier` (current << peak, e.g. a
+    returning player) pulls the score back up toward peak instead of
+    trusting a possibly-rusty current rank alone - see
+    rating.official.blend_current_and_peak for the exact rule. It's never a
+    scoring input on its own (no current-season tier means Seed Rating,
+    which never looks at peak either), only ever a modifier on top of a
+    real current-season read.
 
     Official Rating and Seed Rating are mutually exclusive, independently
     tracked concepts: `official_rating` is set only when a real tier basis

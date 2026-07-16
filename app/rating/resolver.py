@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from app.rating.official import DIVISION_OFFSET, OfficialRatingCalculator, TIER_BASE_SCORE
+from app.rating.official import DIVISION_OFFSET, OfficialRatingCalculator, TIER_BASE_SCORE, blend_current_and_peak
 from app.rating.official_strategy import CurrentTierPriorityStrategy, OfficialRatingStrategy
 from app.utils.enums import Division, RatingSource, Tier
 
@@ -61,18 +61,25 @@ def seed_rating_for_tier(tier: Tier, division: Division = Division.III) -> float
 
 
 class RatingCaseResolver:
-    """Case 1: Riot confirms a current-season tier -> Official Rating,
-    high confidence, no calibration needed.
-    Case 2/3 (no current-season tier, Peak Tier present or not - Peak Tier
-    is never a scoring input either way): an operator must supply a Seed
-    Rating tier judgment -> low confidence, Calibration Mode on so a
-    handful of real games can correct a bad initial guess quickly."""
+    """Case 1: Riot confirms a current-season tier -> Official Rating, high
+    confidence, no calibration needed. Blended with Peak Tier once the two
+    diverge enough (see rating.official.blend_current_and_peak) - a Peak
+    Tier reading is otherwise pure metadata with no bearing on the score.
+    Case 2/3 (no current-season tier at all): an operator must supply a
+    Seed Rating tier judgment -> low confidence, Calibration Mode on so a
+    handful of real games can correct a bad initial guess quickly. Peak
+    Tier is still never a scoring input in this branch - resolve_seed()
+    only ever has an operator's own judgment to go on, no current tier to
+    blend it against."""
 
     def __init__(self, strategy: Optional[OfficialRatingStrategy] = None) -> None:
         self.strategy = strategy or CurrentTierPriorityStrategy()
 
     def resolve_current_season(self, current: TierSnapshot, peak: Optional[TierSnapshot]) -> RatingResolution:
-        official_rating = OfficialRatingCalculator().calculate_from(current.tier, current.division, current.lp)
+        calc = OfficialRatingCalculator()
+        current_score = calc.calculate_from(current.tier, current.division, current.lp)
+        peak_score = calc.calculate_from(peak.tier, peak.division, peak.lp) if peak is not None else None
+        official_rating = blend_current_and_peak(current_score, peak_score)
         return RatingResolution(
             tier=current.tier,
             division=current.division,
