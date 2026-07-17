@@ -104,6 +104,45 @@ class PlayerService:
         best = max(entries, key=lambda e: calc.calculate_from(e.tier, e.division, e.lp))
         return TierSnapshot(best.tier, best.division, best.lp), best.season
 
+    def resolve_peak_tier(
+        self, game_name: str, tag_line: str, current: Optional[TierSnapshot]
+    ) -> Optional[tuple[TierSnapshot, str]]:
+        """The actual Peak Tier to auto-register: whichever of (a) OP.GG's
+        best historical season or (b) the player's live current-season rank
+        scores higher on this app's own scale - never just (a) alone.
+
+        OP.GG's season table can lag behind a player's live rank (it only
+        locks in once a season/split is scored, so a player mid-climb this
+        season can already be sitting above every OP.GG-recorded season) -
+        blindly trusting OP.GG here would register a "peak" that's actually
+        lower than the player's current tier, which is never correct. When
+        current wins, the season label is this server's current season
+        label (see Server.current_season_label), not an OP.GG one.
+
+        Only meaningful when the player has a current-season rank at all -
+        an unranked player (current=None) has no live tier to compare
+        against, so this simply falls back to fetch_peak_from_opgg()
+        unchanged (still useful metadata for a Seed Rating judgment call,
+        just not auto-resolved against anything)."""
+        opgg_result = self.fetch_peak_from_opgg(game_name, tag_line)
+        if current is None:
+            return opgg_result
+
+        calc = OfficialRatingCalculator()
+        current_score = calc.calculate_from(current.tier, current.division, current.lp)
+        if opgg_result is None:
+            return current, self._current_season_label()
+
+        opgg_snapshot, opgg_season = opgg_result
+        opgg_score = calc.calculate_from(opgg_snapshot.tier, opgg_snapshot.division, opgg_snapshot.lp)
+        if current_score >= opgg_score:
+            return current, self._current_season_label()
+        return opgg_result
+
+    def _current_season_label(self) -> str:
+        server = self.server_repo.get(self.server_id)
+        return server.current_season_label if server is not None else settings.current_season_label
+
     def infer_position(self, puuid: str) -> Optional[RoleRecommendation]:
         """Main/Sub role recommendation from recent ranked match history, or
         None if the account has no ranked history to infer from at all.
@@ -137,8 +176,10 @@ class PlayerService:
         permanent reference fields exactly once, here - it's never written
         again after this call, matching the "Riot recommends, Profile
         decides" priority order. `peak_achieved_season` is purely stored
-        metadata alongside `peak` (see fetch_peak_from_opgg) - pass None
-        when `peak` came from manual entry rather than an OP.GG lookup."""
+        metadata alongside `peak` (see resolve_peak_tier) - either an OP.GG
+        season label or this server's current season label, whichever the
+        `peak` snapshot actually came from - pass None when `peak` came
+        from manual entry instead."""
         require_permission(actor_role, Permission.MANAGE_PLAYERS)
         resolver = RatingCaseResolver(self.official_rating_strategy)
         if current is not None:
@@ -336,8 +377,7 @@ class PlayerService:
 
     def _record_season_snapshot(self, player: Player) -> None:
         assert player.id is not None
-        server = self.server_repo.get(self.server_id)
-        season_label = server.current_season_label if server is not None else settings.current_season_label
+        season_label = self._current_season_label()
         self.season_rank_repo.add(
             PlayerSeasonRank(
                 player_id=player.id,

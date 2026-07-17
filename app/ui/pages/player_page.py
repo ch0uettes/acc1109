@@ -176,7 +176,7 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
             except requests.HTTPError as exc:
                 st.error(f"Riot API 조회 실패: {exc}")
             else:
-                opgg_peak = service.fetch_peak_from_opgg(game_name, tag_line)
+                opgg_peak = service.resolve_peak_tier(game_name, tag_line, current)
                 # New probe -> reset any stale peak-field widget state so the
                 # freshly fetched (or absent) OP.GG value actually takes
                 # effect as the selectbox default below.
@@ -223,12 +223,19 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
 
     st.caption("최고 티어 (선택) - 참고용이 아니라, 현재 티어와 200점 이상 차이 나면 base rating 계산에 가중 반영됩니다.")
     opgg_peak: tuple[TierSnapshot, str] | None = probe.get("opgg_peak")
+    is_current_season_peak = opgg_peak is not None and current is not None and opgg_peak[0] == current
     if opgg_peak is not None:
         fetched_snapshot, fetched_season = opgg_peak
-        st.caption(
-            f"출처: OP.GG - 자동으로 찾은 최고 티어({fetched_season} 시즌)로 아래 값이 채워졌습니다. "
-            "필요하면 직접 수정하세요."
-        )
+        if is_current_season_peak:
+            st.caption(
+                f"현재 시즌 랭크({fetched_season})가 OP.GG에 기록된 과거 시즌보다 높아 최고 티어로 자동 반영됐습니다. "
+                "필요하면 직접 수정하세요."
+            )
+        else:
+            st.caption(
+                f"출처: OP.GG - 자동으로 찾은 최고 티어({fetched_season} 시즌)로 아래 값이 채워졌습니다. "
+                "필요하면 직접 수정하세요."
+            )
     else:
         st.caption("OP.GG에서 최고 티어 이력을 찾지 못했습니다 - 알고 있다면 직접 입력해주세요 (선택 사항).")
 
@@ -305,7 +312,11 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
         except PermissionDeniedError as exc:
             st.error(f"권한이 없습니다: {exc}")
         else:
-            peak_note = f", 최고 티어 출처: OP.GG ({peak_achieved_season})" if peak_achieved_season else ""
+            peak_note = ""
+            if peak_achieved_season and is_current_season_peak:
+                peak_note = f", 최고 티어: 현재 시즌 랭크가 최고 기록 ({peak_achieved_season})"
+            elif peak_achieved_season:
+                peak_note = f", 최고 티어 출처: OP.GG ({peak_achieved_season})"
             st.success(
                 f"{player.nickname} 추가 완료 (출처: {RATING_SOURCE_LABEL[player.rating_source]}, "
                 f"신뢰도 {player.confidence:.0%}{peak_note})"
@@ -394,7 +405,7 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
             recommendation = service.infer_position(puuid)
             main_role = recommendation.main if recommendation else Position.MID
             sub_role = recommendation.sub if recommendation else None
-            opgg_result = service.fetch_peak_from_opgg(game_name, tag_line)
+            opgg_result = service.resolve_peak_tier(game_name, tag_line, current)
             peak = opgg_result[0] if opgg_result else None
             peak_achieved_season = opgg_result[1] if opgg_result else None
 
@@ -423,7 +434,11 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
                 failed.append((nickname, f"등록 실패 (이미 존재하는 참가자일 수 있음): {exc}"))
                 continue
 
-            peak_note = f", 최고 티어 출처: OP.GG ({peak_achieved_season})" if peak_achieved_season else ""
+            peak_note = ""
+            if peak_achieved_season and peak == current:
+                peak_note = f", 최고 티어: 현재 시즌 랭크가 최고 기록 ({peak_achieved_season})"
+            elif peak_achieved_season:
+                peak_note = f", 최고 티어 출처: OP.GG ({peak_achieved_season})"
             added.append(f"{player.nickname} ({RATING_SOURCE_LABEL[player.rating_source]}{peak_note})")
 
         del st.session_state["bulk_riot_ocr"]
