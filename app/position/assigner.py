@@ -20,7 +20,12 @@ class PositionAssigner(ABC):
     the resulting slots get scored (BalanceEvaluator's job)."""
 
     @abstractmethod
-    def assign(self, players: list[Player], preferences: dict[int, RolePreference]) -> list[TeamSlot]:
+    def assign(
+        self,
+        players: list[Player],
+        preferences: dict[int, RolePreference],
+        forced_positions: Optional[dict[int, Position]] = None,
+    ) -> list[TeamSlot]:
         ...
 
 
@@ -36,7 +41,12 @@ class BipartiteMatchingPositionAssigner(PositionAssigner):
     def __init__(self, role_penalty_config: RolePenaltyConfig = DEFAULT_ROLE_PENALTY_CONFIG) -> None:
         self.role_penalty_config = role_penalty_config
 
-    def assign(self, players: list[Player], preferences: dict[int, RolePreference]) -> list[TeamSlot]:
+    def assign(
+        self,
+        players: list[Player],
+        preferences: dict[int, RolePreference],
+        forced_positions: Optional[dict[int, Position]] = None,
+    ) -> list[TeamSlot]:
         if len(players) != len(ALL_POSITIONS):
             raise ValueError(
                 f"PositionAssigner requires exactly {len(ALL_POSITIONS)} players, got {len(players)}"
@@ -45,6 +55,31 @@ class BipartiteMatchingPositionAssigner(PositionAssigner):
         # equal-cost assignments wins - is deterministic regardless of the
         # caller's input order.
         ordered_players = sorted(players, key=lambda p: p.id)
+        forced = forced_positions or {}
+
+        # A this-match Fixed Role override (see FixedRoleConstraint) must
+        # actually be pinned here, at assignment time - otherwise this
+        # optimizer, which only ever minimizes *total* roster cost, is
+        # free to bump the forced player to a different lane whenever
+        # someone else on the same roster also wants their position, and
+        # the search engine would then have to reject the entire roster
+        # after the fact. Pinning here means almost every roster
+        # containing the forced player satisfies the requirement
+        # immediately, instead of only the rare roster where honoring it
+        # happens to also be the cost-minimal choice.
+        if forced:
+            pinned = self._best_assignment(ordered_players, preferences, restrict_to_main_sub=True, forced=forced)
+            if pinned is not None:
+                return pinned
+            pinned_full = self._best_assignment(ordered_players, preferences, restrict_to_main_sub=False, forced=forced)
+            if pinned_full is not None:
+                return pinned_full
+            # Structurally impossible to honor every pin at once (e.g. two
+            # forced players on the same roster both requiring the same
+            # position) - fall through to the unforced best-fit below so a
+            # valid, fully-evaluated roster is still returned. Leaving the
+            # pins unsatisfied here is exactly what FixedRoleConstraint
+            # exists to catch and reject at leaf time.
 
         restricted = self._best_assignment(ordered_players, preferences, restrict_to_main_sub=True)
         if restricted is not None:
@@ -55,8 +90,13 @@ class BipartiteMatchingPositionAssigner(PositionAssigner):
         return full
 
     def _best_assignment(
-        self, players: list[Player], preferences: dict[int, RolePreference], restrict_to_main_sub: bool
+        self,
+        players: list[Player],
+        preferences: dict[int, RolePreference],
+        restrict_to_main_sub: bool,
+        forced: Optional[dict[int, Position]] = None,
     ) -> Optional[list[TeamSlot]]:
+        forced = forced or {}
         best: Optional[list[tuple[Player, Position, float, str]]] = None
         best_cost: Optional[float] = None
 
@@ -65,6 +105,10 @@ class BipartiteMatchingPositionAssigner(PositionAssigner):
             total_cost = 0.0
             valid = True
             for player, position in zip(players, perm):
+                required = forced.get(player.id)
+                if required is not None and position != required:
+                    valid = False
+                    break
                 penalty, source = self._penalty_for(preferences[player.id], position)
                 if restrict_to_main_sub and source == "other":
                     valid = False

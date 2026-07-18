@@ -17,6 +17,7 @@ from app.models.player import Player
 from app.models.team import Team
 from app.position.assigner import BipartiteMatchingPositionAssigner, PositionAssigner
 from app.position.schemas import RolePreference
+from app.utils.enums import Position
 from app.utils.exceptions import InvalidPlayerCountError
 
 TEAM_SIZE = 5
@@ -208,6 +209,18 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         num_teams = len(players) // TEAM_SIZE
         ordered = self.search_policy.order_players(players)
         features = self.feature_registry.get_active_features(self.strategy, self.normalization_config)
+        # Every hard-enforced this-match override gets pinned directly in
+        # PositionAssigner (see BipartiteMatchingPositionAssigner.assign),
+        # not just checked after the fact - otherwise the optimizer is
+        # free to bump the forced player to a different lane whenever
+        # someone else on the same roster also wants their position, and
+        # almost every roster containing them would fail FixedRoleConstraint
+        # at leaf time for reasons the search has no way to steer around.
+        forced_positions: dict[int, Position] = {
+            player_id: preferences[player_id].main
+            for player_id in override_player_ids
+            if player_id in preferences
+        }
         top = _TopKResults(k)
         self._nodes_expanded = 0
         # Fresh per call (mirrors _TopKResults(k)) - resolves each tier's
@@ -233,15 +246,15 @@ class BacktrackingSearchEngine(TeamSearchEngine):
 
         custom_warm_start = self.search_policy.warm_start(ordered, num_teams)
         warm_start_teams = (
-            self._build_teams(custom_warm_start, preferences)
+            self._build_teams(custom_warm_start, preferences, forced_positions)
             if custom_warm_start is not None
-            else self._build_warm_start_teams(ordered, num_teams, preferences)
+            else self._build_warm_start_teams(ordered, num_teams, preferences, forced_positions)
         )
         warm_start_result = evaluate_and_offer(warm_start_teams)
 
         deadline = time.monotonic() + self.time_budget_seconds
         rosters: list[list[Player]] = [[] for _ in range(num_teams)]
-        self._dfs(ordered, 0, rosters, num_teams, preferences, evaluate_and_offer, deadline)
+        self._dfs(ordered, 0, rosters, num_teams, preferences, evaluate_and_offer, deadline, forced_positions)
 
         results = self.search_policy.order_team_candidates(top.results())
         if not results:
@@ -284,16 +297,25 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         return results
 
     def _build_teams(
-        self, rosters: list[list[Player]], preferences: dict[int, RolePreference]
+        self,
+        rosters: list[list[Player]],
+        preferences: dict[int, RolePreference],
+        forced_positions: dict[int, Position] | None = None,
     ) -> list[Team]:
+        forced_positions = forced_positions or {}
         teams = []
         for index, roster in enumerate(rosters):
-            slots = self.position_assigner.assign(roster, preferences)
+            roster_forced = {p.id: forced_positions[p.id] for p in roster if p.id in forced_positions}
+            slots = self.position_assigner.assign(roster, preferences, forced_positions=roster_forced)
             teams.append(Team(index=index, players=list(roster), slots=slots))
         return teams
 
     def _build_warm_start_teams(
-        self, ordered_players: list[Player], num_teams: int, preferences: dict[int, RolePreference]
+        self,
+        ordered_players: list[Player],
+        num_teams: int,
+        preferences: dict[int, RolePreference],
+        forced_positions: dict[int, Position] | None = None,
     ) -> list[Team]:
         rosters: list[list[Player]] = [[] for _ in range(num_teams)]
         for tier_index in range(TEAM_SIZE):
@@ -301,7 +323,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
             team_order = range(num_teams) if tier_index % 2 == 0 else range(num_teams - 1, -1, -1)
             for team_index, player in zip(team_order, tier_group):
                 rosters[team_index].append(player)
-        return self._build_teams(rosters, preferences)
+        return self._build_teams(rosters, preferences, forced_positions)
 
     def _dfs(
         self,
@@ -312,13 +334,14 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         preferences: dict[int, RolePreference],
         on_leaf,
         deadline: float,
+        forced_positions: dict[int, Position] | None = None,
     ) -> None:
         if self._nodes_expanded >= self.max_nodes or time.monotonic() > deadline:
             return
 
         if player_index == len(players):
             self._nodes_expanded += 1
-            on_leaf(self._build_teams(rosters, preferences))
+            on_leaf(self._build_teams(rosters, preferences, forced_positions))
             return
 
         player = players[player_index]
@@ -363,5 +386,5 @@ class BacktrackingSearchEngine(TeamSearchEngine):
             if self._nodes_expanded >= self.max_nodes or time.monotonic() > deadline:
                 break
             rosters[team_index].append(player)
-            self._dfs(players, player_index + 1, rosters, num_teams, preferences, on_leaf, deadline)
+            self._dfs(players, player_index + 1, rosters, num_teams, preferences, on_leaf, deadline, forced_positions)
             rosters[team_index].pop()

@@ -77,6 +77,95 @@ def test_other_used_only_for_the_minimum_necessary_players():
     assert {s.position for s in slots} == set(Position)
 
 
+def test_forced_position_is_honored_even_when_costlier():
+    # p1's cheapest assignment would normally be TOP (main), but forcing
+    # them into JUNGLE must win over cost-minimization - this is exactly
+    # what FixedRoleConstraint depends on: the optimizer must never bump
+    # a forced player off their pinned position just because it's cheaper
+    # to put someone else there instead.
+    players = [
+        _player(1, Position.TOP),
+        _player(2, Position.JUNGLE),  # would otherwise cleanly take JUNGLE
+        _player(3, Position.MID),
+        _player(4, Position.ADC),
+        _player(5, Position.SUPPORT),
+    ]
+    preferences = {p.id: RolePreference(main=p.main_role) for p in players}
+
+    slots = BipartiteMatchingPositionAssigner().assign(
+        players, preferences, forced_positions={1: Position.JUNGLE}
+    )
+    by_player = {s.player.id: s for s in slots}
+
+    assert by_player[1].position == Position.JUNGLE
+    assert by_player[2].position != Position.JUNGLE
+    assert {s.position for s in slots} == set(Position)
+
+
+def test_forced_position_still_scores_as_main_when_it_is_the_players_actual_main():
+    players = [
+        _player(1, Position.SUPPORT),
+        _player(2, Position.TOP),
+        _player(3, Position.MID),
+        _player(4, Position.ADC),
+        _player(5, Position.JUNGLE),
+    ]
+    preferences = {p.id: RolePreference(main=p.main_role) for p in players}
+    # A this-match override forcing p1 into a role that isn't their
+    # profile main - RolePreferenceManager already resolves this override
+    # as p1's `.main` for the match, so it must score as "main", not
+    # "other", exactly like a real FixedRoleConstraint override does.
+    preferences[1] = RolePreference(main=Position.JUNGLE)
+
+    slots = BipartiteMatchingPositionAssigner().assign(
+        players, preferences, forced_positions={1: Position.JUNGLE}
+    )
+    by_player = {s.player.id: s for s in slots}
+
+    assert by_player[1].position == Position.JUNGLE
+    assert by_player[1].role_source == "main"
+    assert by_player[1].role_penalty == 0.0
+
+
+def test_two_conflicting_forced_positions_fall_back_to_unforced_best_fit():
+    # Two players both forced into TOP on the same roster is structurally
+    # impossible to satisfy at once - assign() must still return a
+    # complete, valid assignment (falling back to the unforced best fit)
+    # rather than raising or leaving a position unfilled. FixedRoleConstraint
+    # is what surfaces this as a rejected candidate at leaf time.
+    players = [
+        _player(1, Position.TOP),
+        _player(2, Position.JUNGLE),
+        _player(3, Position.MID),
+        _player(4, Position.ADC),
+        _player(5, Position.SUPPORT),
+    ]
+    preferences = {p.id: RolePreference(main=p.main_role) for p in players}
+
+    slots = BipartiteMatchingPositionAssigner().assign(
+        players, preferences, forced_positions={1: Position.TOP, 2: Position.TOP}
+    )
+
+    assert {s.position for s in slots} == set(Position)
+    assert len(slots) == 5
+
+
+def test_forced_positions_none_reproduces_unforced_behavior():
+    players = [
+        _player(1, Position.TOP),
+        _player(2, Position.JUNGLE),
+        _player(3, Position.MID),
+        _player(4, Position.ADC),
+        _player(5, Position.SUPPORT),
+    ]
+    preferences = {p.id: RolePreference(main=p.main_role) for p in players}
+
+    with_none = BipartiteMatchingPositionAssigner().assign(players, preferences, forced_positions=None)
+    without_arg = BipartiteMatchingPositionAssigner().assign(players, preferences)
+
+    assert {s.player.id: s.position for s in with_none} == {s.player.id: s.position for s in without_arg}
+
+
 def test_assignment_is_deterministic_across_repeated_calls():
     players = [
         _player(1, Position.TOP),
