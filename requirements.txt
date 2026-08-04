@@ -9,5 +9,5 @@ pandas
 pytest
 requests
 Pillow
-easyocr
+pytesseract
 beautifulsoup4

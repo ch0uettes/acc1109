@@ -6,8 +6,8 @@ from typing import Optional
 
 from app.ocr.schemas import OCRPlayerRow, OCRRiotIdRow
 
-# EasyOCR row grouping: LoL's end-game table lines are evenly spaced, so
-# nearby detections are clustered into one row using a tolerance sized as a
+# OCR row grouping: LoL's end-game table lines are evenly spaced, so nearby
+# detections are clustered into one row using a tolerance sized as a
 # fraction of image height (not a fixed pixel count) so it holds up across
 # different screenshot resolutions.
 ROW_Y_TOLERANCE_RATIO = 0.015

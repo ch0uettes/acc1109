@@ -35,27 +35,35 @@ class OCRExtractor(ABC):
         으로 일괄 등록" tab. Unrelated to the match-scoreboard extract()."""
 
 
+_NOT_AVAILABLE_MESSAGE = (
+    "OCR is not available - install the 'tesseract-ocr' system package "
+    "(see packages.txt) and 'pytesseract' (pip install -r requirements.txt) to enable it"
+)
+
+
 class NotImplementedOCRExtractor(OCRExtractor):
     def extract(self, image_path: str, known_nicknames: list[str]) -> MatchResultData:
-        raise NotImplementedError(
-            "OCR is not available - install 'easyocr' (pip install -r requirements.txt) to enable it"
-        )
+        raise NotImplementedError(_NOT_AVAILABLE_MESSAGE)
 
     def extract_detail_stats(self, image_path: str) -> dict[str, list]:
-        raise NotImplementedError(
-            "OCR is not available - install 'easyocr' (pip install -r requirements.txt) to enable it"
-        )
+        raise NotImplementedError(_NOT_AVAILABLE_MESSAGE)
 
     def extract_riot_ids(self, image_path: str) -> list[OCRRiotIdRow]:
-        raise NotImplementedError(
-            "OCR is not available - install 'easyocr' (pip install -r requirements.txt) to enable it"
-        )
+        raise NotImplementedError(_NOT_AVAILABLE_MESSAGE)
 
 
-class EasyOCRExtractor(OCRExtractor):
-    """Reads LoL end-game result screenshots with EasyOCR: the main
-    scoreboard (name, K/D/A, gold) via extract(), and optionally the wide
-    stat-comparison screen (CS, vision, damage) via extract_detail_stats().
+class TesseractOCRExtractor(OCRExtractor):
+    """Reads LoL end-game result screenshots with Tesseract (via
+    pytesseract): the main scoreboard (name, K/D/A, gold) via extract(), and
+    optionally the wide stat-comparison screen (CS, vision, damage) via
+    extract_detail_stats().
+
+    Chosen over EasyOCR specifically because EasyOCR pulls in PyTorch, whose
+    memory footprint alone exceeds Streamlit Community Cloud's ~1GB per-app
+    limit and gets the whole process OOM-killed on first use (observed
+    directly in production - see git history). Tesseract is a plain C++
+    binary with no ML framework dependency, at a fraction of the memory
+    cost.
 
     Calibrated against a real Korean-client screenshot (see
     tests/test_ocr_parser.py), but screen resolution/scale/client language
@@ -64,17 +72,34 @@ class EasyOCRExtractor(OCRExtractor):
     before anything is saved."""
 
     def __init__(self, languages: list[str] | None = None) -> None:
-        import easyocr  # heavy import (torch) - deferred to first use
+        import pytesseract  # light import, no ML framework - deferred to first use
 
-        self._reader = easyocr.Reader(languages or ["ko", "en"], gpu=False)
+        pytesseract.get_tesseract_version()  # raises if the system binary isn't installed
+        self._lang = "+".join(languages or ["kor", "eng"])
 
     def _read_rows(self, image_path: str) -> tuple[list[list[tuple[float, str]]], str]:
+        import pytesseract
         from PIL import Image
 
         with Image.open(image_path) as img:
             image_height = img.height
+            data = pytesseract.image_to_data(img, lang=self._lang, output_type=pytesseract.Output.DICT)
 
-        detections = self._reader.readtext(image_path)
+        detections: list[tuple[list[list[float]], str, float]] = []
+        for i, text in enumerate(data["text"]):
+            text = text.strip()
+            if not text:
+                continue
+            left, top = data["left"][i], data["top"][i]
+            width, height = data["width"][i], data["height"][i]
+            bbox = [
+                [left, top],
+                [left + width, top],
+                [left + width, top + height],
+                [left, top + height],
+            ]
+            detections.append((bbox, text, float(data["conf"][i])))
+
         raw_text = "\n".join(text for _, text, _ in detections)
         return cluster_rows(detections, image_height), raw_text
 
@@ -100,7 +125,6 @@ class EasyOCRExtractor(OCRExtractor):
 
 def build_ocr_extractor() -> OCRExtractor:
     try:
-        import easyocr  # noqa: F401
-    except ImportError:
+        return TesseractOCRExtractor()
+    except Exception:  # noqa: BLE001 - missing package, or system tesseract-ocr binary not installed
         return NotImplementedOCRExtractor()
-    return EasyOCRExtractor()

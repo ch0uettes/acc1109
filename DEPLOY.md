@@ -44,9 +44,10 @@ git push -u origin main
 - **인증 없음**: 현재 "내 계정" 선택창은 비밀번호 없이 아무 이름이나 골라 그 사람 권한을
   그대로 가질 수 있습니다 (소규모 신뢰 그룹이라 지금은 그대로 배포하기로 결정함 - 나중에
   필요하면 간단한 PIN 게이트나 Streamlit Cloud의 이메일 초대 기능 추가 가능).
-- **easyocr 의존성**: 무료 티어 리소스(RAM/CPU) 제한 때문에 빌드가 느리거나 실패할 수
-  있습니다. 문제가 생기면 알려주세요 - OCR 기능을 지연 로딩하거나 선택적 의존성으로
-  분리하는 방법이 있습니다.
+- **OCR 엔진**: Tesseract(`pytesseract` + `packages.txt`의 `tesseract-ocr`)를 씁니다.
+  이전에는 EasyOCR을 썼는데, PyTorch를 함께 불러오는 바람에 무료 티어 메모리 한도(~1GB)를
+  넘겨 앱 프로세스 자체가 죽는 문제가 실제로 발생해 Tesseract로 교체했습니다
+  (`app/ocr/extractor.py` 참고).
 - **데이터 지속성**: `DATABASE_URL`이 설정되어 있으면 앱은 자동으로 Postgres를 쓰고,
   로컬에서 그냥 실행하면 (`DATABASE_URL` 미설정) 여전히 로컬 SQLite(`data/app.db`)를
   씁니다 - 로컬 개발 워크플로우는 전혀 바뀌지 않습니다.
