@@ -71,6 +71,20 @@ class TesseractOCRExtractor(OCRExtractor):
     calls this always shows the parsed table for human review/correction
     before anything is saved."""
 
+    # PSM 6 ("assume a single uniform block of text") reliably beat
+    # Tesseract's default PSM 3 (automatic full-page layout analysis) on a
+    # dense, single-column-per-field participant-list/scoreboard screenshot
+    # in direct side-by-side testing: PSM 3 occasionally hallucinated
+    # garbage tokens from anti-aliasing/gridline noise and mis-grouped rows,
+    # while PSM 6 - a much better structural match for this kind of
+    # image - consistently read every row cleanly. (Naive upscaling was
+    # tried too, expecting it to help small/dense screenshots the same way;
+    # tested directly against the same real-world-density image and it
+    # measurably made things *worse* - rows and whole participants dropped
+    # out that PSM 6 alone read correctly - so it was deliberately left
+    # out.)
+    _TESSERACT_CONFIG = "--psm 6"
+
     def __init__(self, languages: list[str] | None = None) -> None:
         import pytesseract  # light import, no ML framework - deferred to first use
 
@@ -83,7 +97,9 @@ class TesseractOCRExtractor(OCRExtractor):
 
         with Image.open(image_path) as img:
             image_height = img.height
-            data = pytesseract.image_to_data(img, lang=self._lang, output_type=pytesseract.Output.DICT)
+            data = pytesseract.image_to_data(
+                img, lang=self._lang, config=self._TESSERACT_CONFIG, output_type=pytesseract.Output.DICT
+            )
 
         detections: list[tuple[list[list[float]], str, float]] = []
         for i, text in enumerate(data["text"]):
