@@ -245,6 +245,20 @@ def test_parse_riot_ids_splits_nickname_and_riot_id_in_separate_boxes():
     assert parsed[1].tag_line == "KR2"
 
 
+def test_parse_riot_ids_accepts_a_korean_custom_tag():
+    # Riot's KR server allows an arbitrary Hangul custom tag, not just a
+    # region code - verified directly against the live Riot API with a real
+    # account ("한아른#담배연기"), so the tag pattern must accept Hangul too.
+    rows = [[(0, "박찬학"), (100, "한아른#담배연기")]]
+
+    parsed = parse_rows_into_riot_ids(rows)
+
+    assert len(parsed) == 1
+    assert parsed[0].nickname == "박찬학"
+    assert parsed[0].game_name == "한아른"
+    assert parsed[0].tag_line == "담배연기"
+
+
 def test_parse_riot_ids_recovers_game_name_split_across_a_space_before_hash():
     # OCR sometimes detects "Hide on bush" and "#KR1" as two separate boxes
     # when there's a visible gap before the '#'.

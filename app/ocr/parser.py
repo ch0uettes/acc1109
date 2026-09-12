@@ -32,11 +32,15 @@ STAT_LABELS: dict[str, str] = {
     "gold": "골드 획득",
 }
 
-# Riot ID tags are short alphanumeric region/custom codes (e.g. "KR1",
-# "NA1", "1234") - never containing '#' themselves, so once a detection is
-# split on the first '#' the remainder up to the first run of non-tag
-# characters is the tag.
-_RIOT_TAG_PATTERN = re.compile(r"[A-Za-z0-9]{2,6}")
+# Riot ID tags used to always be a short alphanumeric region code ("KR1",
+# "NA1", "1234"), but Riot's KR server also lets players pick an arbitrary
+# custom Hangul tag - confirmed directly against this app's own real roster
+# data (e.g. "한아른#담배연기" resolved fine through the live Riot API) - so
+# the tag pattern has to accept Hangul syllables too, not just ASCII
+# alphanumerics. Never contains '#' itself, so once a detection is split on
+# the first '#' the remainder up to the first run of non-tag characters is
+# the tag.
+_RIOT_TAG_PATTERN = re.compile(r"[A-Za-z0-9가-힣]{2,6}")
 
 # Tesseract (the engine this pipeline currently uses - see
 # TesseractOCRExtractor) very often detects one Hangul SYLLABLE per box
