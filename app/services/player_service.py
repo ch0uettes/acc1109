@@ -392,6 +392,16 @@ class PlayerService:
             )
         )
 
+    def rollback(self) -> None:
+        """Call after catching a write failure (e.g. IntegrityError on a
+        duplicate nickname/puuid/discord_id) before doing anything else with
+        this service - on Postgres (unlike SQLite), a failed commit leaves
+        the session's transaction unusable until it's explicitly rolled
+        back, so any later query in the same request (e.g. list_players()
+        for the page's own participant table) would otherwise raise
+        sqlalchemy.exc.PendingRollbackError instead of the real error."""
+        self.repo.session.rollback()
+
     def get_player(self, player_id: int) -> Player:
         return self.repo.get(player_id)
 

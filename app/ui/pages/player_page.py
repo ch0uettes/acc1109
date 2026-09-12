@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 import streamlit as st
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.player import Player
@@ -150,6 +151,9 @@ def _render_manual_tab(service: PlayerService, actor: ServerMembership) -> None:
                 )
             except PermissionDeniedError as exc:
                 st.error(f"권한이 없습니다: {exc}")
+            except IntegrityError:
+                service.rollback()
+                st.error(f"'{nickname}'은(는) 이미 등록된 닉네임입니다. 다른 닉네임을 사용해주세요.")
             else:
                 st.success(f"{nickname} 추가 완료")
                 st.rerun()
@@ -311,6 +315,9 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
             )
         except PermissionDeniedError as exc:
             st.error(f"권한이 없습니다: {exc}")
+        except IntegrityError:
+            service.rollback()
+            st.error(f"'{probe['nickname']}'은(는) 이미 등록된 닉네임이거나 이미 등록된 Riot ID입니다.")
         else:
             peak_note = ""
             if peak_achieved_season and is_current_season_peak:
@@ -428,10 +435,15 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
             except AppError as exc:
                 failed.append((nickname, str(exc)))
                 continue
-            except Exception as exc:  # noqa: BLE001 - a duplicate nickname/puuid/discord_id
-                # raises a raw IntegrityError (unique constraint), not an
-                # AppError - one bad row must not abort the whole batch.
-                failed.append((nickname, f"등록 실패 (이미 존재하는 참가자일 수 있음): {exc}"))
+            except IntegrityError:
+                # A duplicate nickname/puuid/discord_id raises a raw
+                # IntegrityError (unique constraint), not an AppError - one
+                # bad row must not abort the whole batch. On Postgres the
+                # failed commit also leaves the session's transaction
+                # unusable until rolled back, so every later row (and the
+                # page's own list_players() call) would otherwise break too.
+                service.rollback()
+                failed.append((nickname, "등록 실패 (이미 존재하는 참가자일 수 있음)"))
                 continue
 
             peak_note = ""
