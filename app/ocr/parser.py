@@ -38,6 +38,22 @@ STAT_LABELS: dict[str, str] = {
 # characters is the tag.
 _RIOT_TAG_PATTERN = re.compile(r"[A-Za-z0-9]{2,6}")
 
+# Tesseract (the engine this pipeline currently uses - see
+# TesseractOCRExtractor) very often detects one Hangul SYLLABLE per box
+# instead of a whole name as a single box, because its layout analysis
+# mistakes each syllable block's small kerning gap for a word boundary
+# (verified directly against a real participant-roster screenshot: a 3-4
+# syllable nickname/game name routinely comes back as 3-4 separate
+# single-character detections a few pixels apart). Every heuristic below
+# that reconstructs a name/Riot ID (_best_name_match, _split_riot_id)
+# assumes one detection per name, so adjacent same-row Hangul-only
+# detections with a tight gap are re-joined in _merge_split_hangul() before
+# anything else sees them. Scoped to Hangul-only text on both sides so it
+# never touches a Riot ID tag/English text, which Tesseract already keeps
+# intact as one box.
+_HANGUL_SYLLABLE_START, _HANGUL_SYLLABLE_END = 0xAC00, 0xD7A3
+MERGE_GAP_HEIGHT_RATIO = 0.6
+
 Detection = tuple[list[list[float]], str, float]
 
 
@@ -47,31 +63,79 @@ def _center(bbox: list[list[float]]) -> tuple[float, float]:
     return sum(xs) / len(xs), sum(ys) / len(ys)
 
 
+def _is_pure_hangul(text: str) -> bool:
+    return bool(text) and all(_HANGUL_SYLLABLE_START <= ord(ch) <= _HANGUL_SYLLABLE_END for ch in text)
+
+
+def _merge_split_hangul(row: list[tuple[float, float, float, float, str]]) -> list[tuple[float, str]]:
+    """`row`, sorted left-to-right, is (center_x, left, right, height, text)
+    per detection. Merges a run of adjacent pure-Hangul detections into one
+    token (no separator - a Hangul name is never legitimately split by a
+    real space at the syllable level) whenever the gap between them is
+    small relative to their height; a real column boundary's gap is many
+    times larger (see MERGE_GAP_HEIGHT_RATIO)."""
+    merged: list[tuple[float, str]] = []
+    group_cxs: list[float] = []
+    group_texts: list[str] = []
+    prev_right: Optional[float] = None
+    prev_height: Optional[float] = None
+
+    def _flush() -> None:
+        if group_texts:
+            merged.append((sum(group_cxs) / len(group_cxs), "".join(group_texts)))
+
+    for cx, left, right, height, text in row:
+        can_merge = (
+            group_texts
+            and _is_pure_hangul(group_texts[-1])
+            and _is_pure_hangul(text)
+            and prev_right is not None
+            and prev_height is not None
+            and (left - prev_right) <= prev_height * MERGE_GAP_HEIGHT_RATIO
+        )
+        if can_merge:
+            group_texts.append(text)
+            group_cxs.append(cx)
+        else:
+            _flush()
+            group_texts, group_cxs = [text], [cx]
+        prev_right, prev_height = right, height
+    _flush()
+    return merged
+
+
 def cluster_rows(detections: list[Detection], image_height: float) -> list[list[tuple[float, str]]]:
     """Groups OCR detections into rows by y-proximity, sorting each row's
-    contents left-to-right by x. Returns list of rows, each a list of
-    (center_x, text)."""
+    contents left-to-right by x and re-joining Hangul text Tesseract split
+    across multiple boxes (see _merge_split_hangul). Returns list of rows,
+    each a list of (center_x, text)."""
     y_tolerance = image_height * ROW_Y_TOLERANCE_RATIO
+
+    def _edges(bbox: list[list[float]]) -> tuple[float, float, float]:
+        xs = [p[0] for p in bbox]
+        ys = [p[1] for p in bbox]
+        return min(xs), max(xs), max(ys) - min(ys)
+
     items = sorted(
-        ((*_center(bbox), text) for bbox, text, _conf in detections),
+        ((*_center(bbox), *_edges(bbox), text) for bbox, text, _conf in detections),
         key=lambda t: t[1],
     )
 
-    rows: list[list[tuple[float, str]]] = []
-    current_row: list[tuple[float, str]] = []
+    rows: list[list[tuple[float, float, float, float, str]]] = []
+    current_row: list[tuple[float, float, float, float, str]] = []
     row_y: Optional[float] = None
 
-    for cx, cy, text in items:
+    for cx, cy, left, right, height, text in items:
         if row_y is None or abs(cy - row_y) <= y_tolerance:
-            current_row.append((cx, text))
+            current_row.append((cx, left, right, height, text))
             row_y = cy if row_y is None else (row_y + cy) / 2
         else:
             rows.append(sorted(current_row, key=lambda t: t[0]))
-            current_row = [(cx, text)]
+            current_row = [(cx, left, right, height, text)]
             row_y = cy
     if current_row:
         rows.append(sorted(current_row, key=lambda t: t[0]))
-    return rows
+    return [_merge_split_hangul(row) for row in rows]
 
 
 def _row_text(row: list[tuple[float, str]]) -> str:

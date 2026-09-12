@@ -28,6 +28,52 @@ def test_cluster_rows_groups_by_y_and_sorts_by_x():
     assert [text for _, text in rows[1]] == ["PlayerB", "1/2/3"]
 
 
+# --- cluster_rows: re-joining a Hangul name Tesseract split into one box
+# per syllable (verified directly against a real participant-roster
+# screenshot run through Tesseract - see app/ocr/parser.py's
+# _merge_split_hangul docstring) ---
+
+
+def test_cluster_rows_merges_adjacent_hangul_syllables_with_a_tight_gap():
+    # "허재혁" detected as three separate one-syllable boxes 2px apart -
+    # height 20 means anything under 12px (0.6 * height) is treated as the
+    # same word, not a real gap between columns.
+    detections = [
+        (_box(10, 100, w=20), "허", 0.9),
+        (_box(32, 100, w=20), "재", 0.9),
+        (_box(54, 100, w=20), "혁", 0.9),
+    ]
+
+    rows = cluster_rows(detections, image_height=1000)
+
+    assert [text for _, text in rows[0]] == ["허재혁"]
+
+
+def test_cluster_rows_does_not_merge_hangul_across_a_real_column_gap():
+    # same syllables, but 50px apart (a real column boundary, not kerning).
+    detections = [
+        (_box(10, 100, w=20), "허", 0.9),
+        (_box(80, 100, w=20), "재", 0.9),
+    ]
+
+    rows = cluster_rows(detections, image_height=1000)
+
+    assert [text for _, text in rows[0]] == ["허", "재"]
+
+
+def test_cluster_rows_does_not_merge_hangul_into_a_riot_id_tag():
+    # the Riot ID tag box ("#0217") must stay separate even with a tight
+    # gap, so _split_riot_id can still find the '#' on its own box.
+    detections = [
+        (_box(10, 100, w=20), "린", 0.9),
+        (_box(32, 100, w=30), "#0217", 0.9),
+    ]
+
+    rows = cluster_rows(detections, image_height=1000)
+
+    assert [text for _, text in rows[0]] == ["린", "#0217"]
+
+
 def test_parse_rows_extracts_kda_and_matches_known_nickname():
     rows = [
         [(0, "PlayerA"), (100, "5/2/8")],
