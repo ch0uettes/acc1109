@@ -32,7 +32,7 @@ from app.rating.resolver import (
 from app.riot.client import RiotAPIClient, build_riot_client
 from app.services.rbac import Permission, require_permission
 from app.utils.enums import Division, Position, RatingSource, Role, Tier
-from app.utils.exceptions import InvalidRatingValueError
+from app.utils.exceptions import AppError, InvalidRatingValueError
 
 MAX_INTERNAL_RATING_MAGNITUDE = 3000.0
 
@@ -80,7 +80,27 @@ class PlayerService:
         require_permission(actor_role, Permission.MANAGE_PLAYERS)
         player.official_rating = self.official_rating_strategy.calculate(player)
         player.confidence = CONFIDENCE_MANUAL
-        saved = self.repo.add(player)
+
+        # Same reactivate-instead-of-duplicate handling as register_player -
+        # see its comment for why a deactivated row with this nickname
+        # must not just fail with a raw IntegrityError.
+        existing = self.repo.get_by_nickname(player.nickname)
+        if existing is not None and existing.is_active:
+            raise AppError(
+                f"'{player.nickname}'은(는) 이미 등록된 참가자입니다. 정보를 최신으로 갱신하려면 "
+                "참가자 목록 아래 '참가자 수정 / 삭제'에서 직접 값을 수정해주세요."
+            )
+        if existing is not None:
+            updated = existing.model_copy(
+                update={
+                    **player.model_dump(exclude={"id", "puuid", "internal_rating", "games_played", "is_active"}),
+                    "is_active": True,
+                }
+            )
+            saved = self.repo.update(updated)
+        else:
+            saved = self.repo.add(player)
+
         self._record_season_snapshot(saved)
         return saved
 
@@ -93,6 +113,72 @@ class PlayerService:
         rank = self.riot_client.get_rank(account.puuid)
         current = TierSnapshot(rank.tier, rank.division, rank.lp) if rank else None
         return account.puuid, current
+
+    def refresh_from_riot(self, player_id: int, actor_role: Role) -> tuple[Player, str]:
+        """Re-fetches this already-registered player's CURRENT Riot rank
+        and updates their stored tier/division/lp/official_rating to
+        match, so a roster doesn't go stale between registration and
+        whenever they're next re-added by hand. Uses the puuid already on
+        file - no new Riot ID lookup needed.
+
+        Peak Tier is deliberately left untouched: OP.GG lookups need the
+        actual game_name/tag_line, which this app never stores (only the
+        opaque puuid + the operator's own in-app nickname), so there's
+        nothing to re-scrape from here - and peak tier is a historical
+        high-water mark that only ever needs updating on the rare season
+        it's actually broken, unlike current rank which drifts constantly.
+
+        A manual-entry player (no puuid) has nothing to refresh from and
+        raises AppError. A player who has since gone unranked is
+        intentionally NOT auto-converted to a Seed Rating (skill is never
+        silently assumed here) - this returns a message asking the
+        operator to set one by hand instead, leaving existing data as-is.
+
+        Returns (player, message) rather than raising for that "now
+        unranked" case, since it's an expected, non-erroneous outcome the
+        caller still needs to surface."""
+        require_permission(actor_role, Permission.MANAGE_PLAYERS)
+        player = self.repo.get(player_id)
+        if not player.puuid:
+            raise AppError(f"'{player.nickname}'은(는) Riot 계정이 연동되지 않아 새로고침할 수 없습니다 (수동 입력 참가자).")
+
+        try:
+            rank = self.riot_client.get_rank(player.puuid)
+        except NotImplementedError as exc:
+            raise AppError(f"{exc} — 환경변수 RIOT_API_KEY를 설정해주세요.") from exc
+        except requests.exceptions.RequestException as exc:
+            raise AppError(f"Riot API 조회 실패: {exc}") from exc
+        if rank is None:
+            return player, f"'{player.nickname}'은(는) 현재 시즌 언랭 상태입니다 - 필요하면 아래에서 Seed Rating을 직접 설정해주세요."
+
+        current = TierSnapshot(rank.tier, rank.division, rank.lp)
+        peak = (
+            TierSnapshot(player.peak_tier, player.peak_division, player.peak_lp)
+            if player.peak_tier is not None and player.peak_division is not None and player.peak_lp is not None
+            else None
+        )
+        resolution = RatingCaseResolver(self.official_rating_strategy).resolve_current_season(current, peak)
+
+        updated = player.model_copy(
+            update={
+                "tier": resolution.tier,
+                "division": resolution.division,
+                "lp": resolution.lp,
+                "official_rating": resolution.official_rating,
+                "seed_rating": None,
+                "rating_source": RatingSource.CURRENT_SEASON,
+                "confidence": resolution.confidence,
+                "calibration_mode": resolution.calibration_mode,
+            }
+        )
+        saved = self.repo.update(updated)
+        self._record_season_snapshot(saved)
+        tier_label = (
+            f"{saved.tier.value} {saved.lp}LP"
+            if saved.tier == Tier.MASTER
+            else f"{saved.tier.value} {saved.division.value} {saved.lp}LP"
+        )
+        return saved, f"'{saved.nickname}' 정보를 최신 랭크로 갱신했습니다 ({tier_label})."
 
     def fetch_peak_from_opgg(self, game_name: str, tag_line: str) -> Optional[tuple[TierSnapshot, str]]:
         """Best-effort Peak Tier + the season it was reached in, scraped
@@ -220,10 +306,55 @@ class PlayerService:
             require_permission(actor_role, Permission.SET_SEED_RATING)
             resolution = resolver.resolve_seed(seed_tier, peak, seed_division)
 
-        player = self._build_player_from_resolution(
-            nickname, puuid, main_role, resolution, sub_role, recommendation, peak_achieved_season
-        )
-        saved = self.repo.add(player)
+        # get_by_puuid/get_by_nickname deliberately aren't filtered by
+        # is_active - a player removed via deactivate_player (soft delete,
+        # see Player.is_active) still occupies the unique (server_id,
+        # puuid)/(server_id, nickname) constraint, so registering the same
+        # person again would otherwise fail with a raw IntegrityError
+        # ("이미 존재하는 참가자") even though they don't show up in the
+        # active roster at all. Reviving that same row (with fresh data)
+        # is what "re-adding" a returning player actually means here -
+        # their match/rating history is already tied to this row's id.
+        existing = self.repo.get_by_puuid(puuid) or self.repo.get_by_nickname(nickname)
+        if existing is not None and existing.is_active:
+            raise AppError(
+                f"'{nickname}'은(는) 이미 등록된 참가자입니다. 정보를 최신으로 갱신하려면 "
+                "참가자 목록 아래 '참가자 수정 / 삭제'에서 선택 후 '정보 새로고침'을 사용해주세요."
+            )
+
+        if existing is not None:
+            updated = existing.model_copy(
+                update={
+                    "nickname": nickname,
+                    "puuid": puuid,
+                    "tier": resolution.tier,
+                    "division": resolution.division,
+                    "lp": resolution.lp,
+                    "peak_tier": resolution.peak_tier,
+                    "peak_division": resolution.peak_division,
+                    "peak_lp": resolution.peak_lp,
+                    "peak_achieved_season": peak_achieved_season,
+                    "official_rating": resolution.official_rating,
+                    "seed_rating": resolution.seed_rating,
+                    "rating_source": resolution.rating_source,
+                    "confidence": resolution.confidence,
+                    "calibration_mode": resolution.calibration_mode,
+                    "main_role": main_role,
+                    "sub_role": sub_role,
+                    "recommended_main_role": recommendation.main if recommendation else None,
+                    "recommended_main_confidence": recommendation.main_ratio if recommendation else None,
+                    "recommended_sub_role": recommendation.sub if recommendation else None,
+                    "recommended_sub_confidence": recommendation.sub_ratio if recommendation else None,
+                    "is_active": True,
+                }
+            )
+            saved = self.repo.update(updated)
+        else:
+            player = self._build_player_from_resolution(
+                nickname, puuid, main_role, resolution, sub_role, recommendation, peak_achieved_season
+            )
+            saved = self.repo.add(player)
+
         self._record_season_snapshot(saved)
         if resolution.rating_source == RatingSource.SEED:
             self._log_seed_rating_change(saved.id, None, resolution.seed_rating, changed_by, reason)

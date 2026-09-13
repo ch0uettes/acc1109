@@ -103,6 +103,18 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
         )
         return _to_domain(entity) if entity else None
 
+    def get_by_puuid(self, puuid: str) -> Player | None:
+        """Deliberately not filtered by is_active (same as get_by_nickname)
+        - both exist to let a caller detect a *deactivated* row with this
+        identity before inserting a new one and hitting the unique
+        constraint (server_id, puuid)/(server_id, nickname) unnecessarily."""
+        entity = (
+            self.session.query(PlayerEntity)
+            .filter(PlayerEntity.server_id == self.server_id, PlayerEntity.puuid == puuid)
+            .one_or_none()
+        )
+        return _to_domain(entity) if entity else None
+
     def list(self, include_inactive: bool = False) -> list[Player]:
         query = self.session.query(PlayerEntity).filter(PlayerEntity.server_id == self.server_id)
         if not include_inactive:

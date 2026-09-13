@@ -152,6 +152,8 @@ def _render_manual_tab(service: PlayerService, actor: ServerMembership) -> None:
                 )
             except PermissionDeniedError as exc:
                 st.error(f"권한이 없습니다: {exc}")
+            except AppError as exc:
+                st.error(str(exc))
             except IntegrityError:
                 service.rollback()
                 st.error(f"'{nickname}'은(는) 이미 등록된 닉네임입니다. 다른 닉네임을 사용해주세요.")
@@ -316,6 +318,8 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
             )
         except PermissionDeniedError as exc:
             st.error(f"권한이 없습니다: {exc}")
+        except AppError as exc:
+            st.error(str(exc))
         except IntegrityError:
             service.rollback()
             st.error(f"'{probe['nickname']}'은(는) 이미 등록된 닉네임이거나 이미 등록된 Riot ID입니다.")
@@ -517,6 +521,19 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
     # target - which is exactly what made 대상 선택 appear to not load the
     # newly selected player's info at all.
     key_suffix = f"_{target.id}"
+
+    if target.puuid:
+        st.caption("Riot 계정과 연동된 참가자입니다 - 삭제 후 재등록할 필요 없이 아래에서 바로 최신 랭크로 갱신할 수 있습니다.")
+        if st.button("Riot에서 최신 정보 새로고침", key=f"refresh_from_riot{key_suffix}"):
+            try:
+                _, message = service.refresh_from_riot(target.id, actor_role=actor.role)
+            except PermissionDeniedError as exc:
+                st.error(f"권한이 없습니다: {exc}")
+            except AppError as exc:
+                st.error(str(exc))
+            else:
+                st.success(message)
+                st.rerun()
 
     edit_tiers = list(Tier) if target.tier == Tier.UNRANKED else RANKED_TIERS
 

@@ -11,7 +11,7 @@ from app.services.match_service import MatchService
 from app.services.player_service import PlayerService
 from app.services.server_service import ServerService
 from app.utils.enums import Division, Position, Role, Tier
-from app.utils.exceptions import PermissionDeniedError
+from app.utils.exceptions import AppError, PermissionDeniedError
 
 
 @pytest.fixture
@@ -99,3 +99,38 @@ def test_deactivating_a_player_with_match_history_does_not_raise(session, server
     # The match's own record of who played is untouched.
     recorded_match = match_service.match_repo.list()[0]
     assert players[0].id in {p.player_id for p in recorded_match.participants}
+
+
+def test_create_player_rejects_a_duplicate_of_an_active_player(server_and_service):
+    _, service = server_and_service
+    service.create_player(_player("대상"), actor_role=Role.SERVER_ADMIN)
+
+    with pytest.raises(AppError):
+        service.create_player(_player("대상"), actor_role=Role.SERVER_ADMIN)
+
+
+def test_create_player_revives_a_deactivated_player_instead_of_erroring(server_and_service):
+    """Regression test: re-adding someone who was previously removed
+    (soft-deleted) used to hit the unique nickname constraint and crash
+    with a raw IntegrityError ("이미 존재하는 참가자") even though they don't
+    show up in the active roster at all - the old row was still there,
+    just inactive. Re-adding them now revives that same row with the
+    fresh data instead."""
+    _, service = server_and_service
+    original = service.create_player(_player("대상"), actor_role=Role.SERVER_ADMIN)
+    service.override_internal_rating(
+        original.id, 250.0, actor_role=Role.SERVER_ADMIN, changed_by="admin"
+    )
+    service.deactivate_player(original.id, actor_role=Role.SERVER_ADMIN)
+
+    revived = service.create_player(
+        Player(nickname="대상", tier=Tier.DIAMOND, division=Division.II, lp=40, main_role=Position.TOP),
+        actor_role=Role.SERVER_ADMIN,
+    )
+
+    assert revived.id == original.id  # same row, not a new duplicate
+    assert revived.is_active is True
+    assert revived.tier == Tier.DIAMOND
+    assert revived.main_role == Position.TOP
+    assert revived.internal_rating == 250.0  # earned inhouse history survives the revival
+    assert original.id in {p.id for p in service.list_players()}
