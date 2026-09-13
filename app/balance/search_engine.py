@@ -230,6 +230,16 @@ class BacktrackingSearchEngine(TeamSearchEngine):
             registry=self.constraint_registry, strategy=self.strategy, search_policy=self.search_policy,
             constraint_priorities=self.constraint_priorities,
         )
+        # evaluate_and_offer() already runs evaluate_leaf() on every result
+        # it produces (including the warm-start one) - cached here by
+        # object identity so the later last_constraint_results pass (below)
+        # can reuse it instead of calling evaluate_leaf() again on the same
+        # teams. Re-running it there used to double-count
+        # ConstraintStatistics.hard_fail_count for the one case where it's
+        # observable: the warm-start-fallback result, which failed hard
+        # constraints exactly once during the search but got re-evaluated
+        # (and re-counted as a failure) a second time purely for display.
+        leaf_results_cache: dict[int, list] = {}
 
         def evaluate_and_offer(teams: list[Team]) -> BalanceResult:
             raw = self.evaluator.evaluate_raw(teams, features)
@@ -239,6 +249,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
             leaf_results = self.constraint_executor.evaluate_leaf(
                 teams, players, preferences, override_player_ids
             )
+            leaf_results_cache[id(result)] = leaf_results
             leaf_ok = not any(r.status == ConstraintStatus.FAIL for r in leaf_results)
             if leaf_ok and self.hard_constraints.is_feasible(teams, raw):
                 top.offer(result)
@@ -274,17 +285,16 @@ class BacktrackingSearchEngine(TeamSearchEngine):
             normalized = self.evaluator.normalize(result.cost_breakdown, features)
             result.contributions = self.evaluator.explain(result.cost_breakdown, normalized, self.strategy)
 
-        # Real per-candidate Constraint Engine results, re-derived for the
-        # handful of results actually returned (same "not thousands of
-        # times over" reasoning as explain() above) - includes whatever
-        # search_top_k() actually returned, warm-start fallback included,
-        # so a Hard-violating fallback result is visible rather than
-        # silently treated as compliant (see BacktrackingSearchEngine's
-        # class docstring on the warm-start guarantee).
-        self.last_constraint_results = [
-            self.constraint_executor.evaluate_leaf(result.teams, players, preferences, override_player_ids)
-            for result in results
-        ]
+        # Real per-candidate Constraint Engine results for the handful of
+        # results actually returned - includes whatever search_top_k()
+        # actually returned, warm-start fallback included, so a
+        # Hard-violating fallback result is visible rather than silently
+        # treated as compliant (see BacktrackingSearchEngine's class
+        # docstring on the warm-start guarantee). Reuses each result's
+        # already-computed leaf_results (see leaf_results_cache above)
+        # instead of calling evaluate_leaf() again, which would otherwise
+        # double-count that same evaluation into ConstraintStatistics.
+        self.last_constraint_results = [leaf_results_cache[id(result)] for result in results]
 
         # Post-call read-only stats for callers building an ExecutionContext
         # (see app/balance/execution_context.py) - set every call, not

@@ -6,6 +6,7 @@ from app.balance.result import BalanceResult
 from app.balance.search_engine import BacktrackingSearchEngine, TeamSearchEngine, _filter_by_quality
 from app.models.player import Player
 from app.position.preference_manager import RolePreferenceManager
+from app.position.schemas import RolePreference
 from app.utils.enums import Position, Tier
 from app.utils.exceptions import InvalidPlayerCountError
 
@@ -253,3 +254,29 @@ def test_team_search_engine_default_search_top_k_wraps_plain_search():
 
     fallback_engine = _SingleResultEngine(expected)
     assert fallback_engine.search_top_k(players, _preferences(players), k=3) == [expected]
+
+
+def test_warm_start_fallback_records_hard_fail_count_once_not_twice():
+    """Regression test: search_top_k() re-derived last_constraint_results by
+    calling evaluate_leaf() a second time on each returned result, on the
+    very same (stateful) ConstraintExecutor already used during the search
+    - double-counting ConstraintStatistics.hard_fail_count for any result
+    that failed hard constraints (observable whenever the warm-start
+    fallback kicks in, since that result necessarily failed during the
+    search). Every genuine evaluate_leaf() call during the search happens
+    exactly once per DFS leaf reached (one per last_nodes_expanded
+    increment) plus once for the warm start - so with every leaf forced to
+    fail (3 players fixed to the same TOP role, only 1 TOP slot per team),
+    hard_fail_count must equal exactly that count, not more."""
+    players = _players(10)
+    preferences = _preferences(players)
+    forced_ids = frozenset({players[0].id, players[1].id, players[2].id})
+    for pid in forced_ids:
+        preferences[pid] = RolePreference(main=Position.TOP)
+
+    engine = BacktrackingSearchEngine(max_nodes=50, time_budget_seconds=1.0)
+    results = engine.search_top_k(players, preferences, k=3, override_player_ids=forced_ids)
+
+    assert len(results) == 1  # the warm-start fallback, nothing else qualified
+    genuine_evaluation_count = engine.last_nodes_expanded + 1  # +1 for the warm start
+    assert engine.last_constraint_statistics.hard_fail_count == genuine_evaluation_count
