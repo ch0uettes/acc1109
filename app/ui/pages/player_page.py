@@ -510,40 +510,61 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
     target_options = {f"{p.nickname} ({p.tier.value})": p for p in players}
     target_label = st.selectbox("대상 선택", list(target_options.keys()), key="edit_target")
     target = target_options[target_label]
+    # Every other widget below is keyed off this suffix so switching the
+    # selected target gets fresh widgets (and therefore the freshly
+    # computed index=/value= defaults below) instead of Streamlit reusing
+    # whatever session_state a fixed key already held from the *previous*
+    # target - which is exactly what made 대상 선택 appear to not load the
+    # newly selected player's info at all.
+    key_suffix = f"_{target.id}"
 
     edit_tiers = list(Tier) if target.tier == Tier.UNRANKED else RANKED_TIERS
 
     with st.form("edit_player"):
         col1, col2, col3 = st.columns(3)
-        new_tier = col1.selectbox("현재 티어", edit_tiers, index=edit_tiers.index(target.tier))
-        new_division = col2.selectbox(
-            "현재 디비전", list(Division), index=list(Division).index(target.division)
+        new_tier = col1.selectbox(
+            "현재 티어", edit_tiers, index=edit_tiers.index(target.tier), key=f"edit_tier{key_suffix}"
         )
-        new_lp = col3.number_input("현재 LP", min_value=0, max_value=3000, value=target.lp)
+        new_division = col2.selectbox(
+            "현재 디비전",
+            list(Division),
+            index=list(Division).index(target.division),
+            key=f"edit_division{key_suffix}",
+        )
+        new_lp = col3.number_input(
+            "현재 LP", min_value=0, max_value=3000, value=target.lp, key=f"edit_lp{key_suffix}"
+        )
         rcol1, rcol2 = st.columns(2)
         new_main_role = rcol1.selectbox(
-            "주 포지션", list(Position), index=list(Position).index(target.main_role), key="edit_main_role"
+            "주 포지션",
+            list(Position),
+            index=list(Position).index(target.main_role),
+            key=f"edit_main_role{key_suffix}",
         )
-        new_sub_role = _sub_role_selectbox("부 포지션 (선택)", key="edit_sub_role", default=target.sub_role)
+        new_sub_role = _sub_role_selectbox(
+            "부 포지션 (선택)", key=f"edit_sub_role{key_suffix}", default=target.sub_role
+        )
 
         st.caption("최고 티어 - 현재 티어와 200점 이상 차이 나면 base rating 계산에 가중 반영됩니다.")
         if target.peak_achieved_season:
             st.caption(f"현재 저장된 값의 출처: OP.GG ({target.peak_achieved_season}) - 아래 값을 직접 바꾸면 이 출처 표시는 사라집니다.")
-        no_peak = st.checkbox("최고 티어 정보 없음", value=target.peak_tier is None, key="edit_no_peak")
+        no_peak = st.checkbox(
+            "최고 티어 정보 없음", value=target.peak_tier is None, key=f"edit_no_peak{key_suffix}"
+        )
         pcol1, pcol2, pcol3 = st.columns(3)
         new_peak_tier = pcol1.selectbox(
             "최고 티어",
             RANKED_TIERS,
             index=RANKED_TIERS.index(target.peak_tier) if target.peak_tier else 0,
             disabled=no_peak,
-            key="edit_peak_tier",
+            key=f"edit_peak_tier{key_suffix}",
         )
         new_peak_division = pcol2.selectbox(
             "최고 디비전",
             list(Division),
             index=list(Division).index(target.peak_division) if target.peak_division else 0,
             disabled=no_peak,
-            key="edit_peak_division",
+            key=f"edit_peak_division{key_suffix}",
         )
         new_peak_lp = pcol3.number_input(
             "최고 LP",
@@ -551,7 +572,7 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
             max_value=3000,
             value=target.peak_lp or 0,
             disabled=no_peak,
-            key="edit_peak_lp",
+            key=f"edit_peak_lp{key_suffix}",
         )
 
         can_override_rating = has_permission(actor.role, Permission.SET_SEED_RATING)
@@ -563,10 +584,12 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
             "Internal Rating 직접 수정",
             value=float(target.internal_rating),
             disabled=not can_override_rating,
-            key="edit_internal_rating_override",
+            key=f"edit_internal_rating_override{key_suffix}",
         )
         internal_rating_reason = st.text_input(
-            "Internal Rating 변경 사유 (선택)", disabled=not can_override_rating, key="edit_internal_rating_reason"
+            "Internal Rating 변경 사유 (선택)",
+            disabled=not can_override_rating,
+            key=f"edit_internal_rating_reason{key_suffix}",
         )
 
         is_seed = new_tier == Tier.UNRANKED
@@ -582,15 +605,15 @@ def _render_edit_delete(service: PlayerService, players: list[Player], actor: Se
             )
             secol1, secol2 = st.columns(2)
             new_seed_tier = secol1.selectbox(
-                "Seed Rating 티어", RANKED_TIERS, index=default_seed_index, key="edit_seed_tier"
+                "Seed Rating 티어", RANKED_TIERS, index=default_seed_index, key=f"edit_seed_tier{key_suffix}"
             )
             new_seed_division = secol2.selectbox(
                 "Seed Rating 디비전",
                 list(Division),
                 index=list(Division).index(Division.III),
-                key="edit_seed_division",
+                key=f"edit_seed_division{key_suffix}",
             )
-            seed_reason = st.text_input("변경 사유", key="edit_seed_reason")
+            seed_reason = st.text_input("변경 사유", key=f"edit_seed_reason{key_suffix}")
 
         col_update, col_delete = st.columns(2)
         do_update = col_update.form_submit_button("수정 저장")
