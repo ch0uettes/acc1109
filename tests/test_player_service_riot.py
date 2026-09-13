@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 import pytest
+import requests
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -114,3 +115,28 @@ def test_register_player_unranked_uses_operator_seed_tier(session):
     assert player.official_rating is None
     assert player.seed_rating is not None
     assert 1200 < player.seed_rating < 1600  # somewhere inside Gold's span
+
+
+class RateLimitedRiotAPIClient(FakeRiotAPIClient):
+    """A dev key's rate limit exhausted even after LiveRiotAPIClient's own
+    retry/backoff - e.g. several players' position inference back to back
+    during bulk registration outrunning the ~100 req/2min budget (observed
+    directly in production)."""
+
+    def get_match_history(self, puuid: str, count: int = 20, start: int = 0) -> list[MatchHistoryEntry]:
+        response = requests.Response()
+        response.status_code = 429
+        raise requests.HTTPError(response=response)
+
+
+def test_infer_position_returns_none_instead_of_raising_when_rate_limited(session):
+    """Regression test: infer_position() used to let a raw HTTPError (a
+    Riot rate-limit 429 that survived retries) propagate all the way up -
+    in the bulk-registration loop specifically, that crashed the *entire*
+    batch on whichever player happened to hit the limit first, not just
+    that one row. Position inference is reference-only enrichment (same
+    "never raises, always optional" contract as resolve_peak_tier's OP.GG
+    lookup), so a failed fetch must degrade to None, not blow up."""
+    service = PlayerService(session, server_id=1, riot_client=RateLimitedRiotAPIClient(rank=None))
+
+    assert service.infer_position("some-puuid") is None

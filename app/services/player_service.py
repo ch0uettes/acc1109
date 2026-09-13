@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+import requests
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -162,9 +163,19 @@ class PlayerService:
 
     def infer_position(self, puuid: str) -> Optional[RoleRecommendation]:
         """Main/Sub role recommendation from recent ranked match history, or
-        None if the account has no ranked history to infer from at all.
-        Reference-only: never applied automatically after registration."""
-        return self.position_analyzer.recommend(puuid)
+        None if the account has no ranked history to infer from, or if the
+        history fetch itself failed (e.g. the dev key's rate limit was
+        exhausted even after LiveRiotAPIClient's own retry/backoff -
+        observed directly during a large bulk registration, where several
+        players' worth of match-history fetches back to back can still
+        outrun a personal key's ~100 req/2min budget). Reference-only:
+        never applied automatically after registration, and - same
+        "never raises, always optional" contract as resolve_peak_tier's
+        OP.GG lookup - never something a registration should fail over."""
+        try:
+            return self.position_analyzer.recommend(puuid)
+        except requests.exceptions.RequestException:
+            return None
 
     def register_player(
         self,

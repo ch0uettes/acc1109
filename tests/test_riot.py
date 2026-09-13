@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+import requests
 
 from app.riot.client import (
     CHALLENGER_LP_OFFSET,
@@ -12,6 +13,54 @@ from app.riot.client import (
     _convert_riot_rank,
 )
 from app.utils.enums import Division, Tier
+
+
+def _response(status_code: int, payload=None, headers=None) -> MagicMock:
+    response = MagicMock(status_code=status_code, headers=headers or {})
+    response.json.return_value = payload
+    if status_code >= 400:
+        response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    else:
+        response.raise_for_status.return_value = None
+    return response
+
+
+def test_get_retries_after_a_429_and_returns_the_eventual_success():
+    """Regression test: a dev key's rate-limit window can fill up mid-batch
+    (e.g. several players' position inference back to back during bulk
+    registration - observed directly in production) and Riot's 429 tells
+    us exactly how long to wait via Retry-After. One transient 429 must not
+    surface as a crash if a retry within budget succeeds."""
+    client = LiveRiotAPIClient(api_key="fake-key")
+    responses = [_response(429, headers={"Retry-After": "0"}), _response(200, payload={"ok": True})]
+
+    with patch("app.riot.client.requests.get", side_effect=responses):
+        with patch("app.riot.client.time.sleep") as mock_sleep:
+            result = client._get("https://example.invalid/x")
+
+    assert result == {"ok": True}
+    mock_sleep.assert_called_once_with(0.0)
+
+
+def test_get_gives_up_after_max_retries_and_raises_the_final_429():
+    client = LiveRiotAPIClient(api_key="fake-key")
+    responses = [_response(429, headers={"Retry-After": "0"}) for _ in range(10)]
+
+    with patch("app.riot.client.requests.get", side_effect=responses):
+        with patch("app.riot.client.time.sleep"):
+            with pytest.raises(requests.HTTPError):
+                client._get("https://example.invalid/x")
+
+
+def test_get_falls_back_to_a_default_wait_when_retry_after_is_missing_or_invalid():
+    client = LiveRiotAPIClient(api_key="fake-key")
+    responses = [_response(429, headers={}), _response(200, payload={"ok": True})]
+
+    with patch("app.riot.client.requests.get", side_effect=responses):
+        with patch("app.riot.client.time.sleep") as mock_sleep:
+            client._get("https://example.invalid/x")
+
+    mock_sleep.assert_called_once_with(LiveRiotAPIClient.RATE_LIMIT_DEFAULT_WAIT_SECONDS)
 
 
 def test_convert_normal_tier_keeps_division_and_lp():

@@ -104,15 +104,37 @@ class LiveRiotAPIClient(RiotAPIClient):
     separately because Riot's routing is split this way.
     """
 
+    # A dev key's ~100 req/2min budget is shared across every call this
+    # process makes - MATCH_DETAIL_REQUEST_DELAY_SECONDS alone only paces
+    # requests *within* one get_match_history() call, so it still gets
+    # exhausted when several players' position inference (each one its own
+    # ~20-match history fetch) run back to back, e.g. during bulk
+    # registration (see player_page.py's "스크린샷으로 일괄 등록" tab -
+    # observed directly in production). Riot's 429 response includes a
+    # Retry-After header telling us exactly how long the window needs to
+    # drain; honoring it directly (bounded to a few attempts) recovers
+    # automatically instead of surfacing as a crash.
+    RATE_LIMIT_MAX_RETRIES = 3
+    RATE_LIMIT_DEFAULT_WAIT_SECONDS = 2.0
+
     def __init__(self, api_key: str, platform: str = "kr", region: str = "asia") -> None:
         self.api_key = api_key
         self.platform = platform
         self.region = region
 
     def _get(self, url: str) -> dict | list:
-        response = requests.get(url, headers={"X-Riot-Token": self.api_key}, timeout=10)
-        response.raise_for_status()
-        return response.json()
+        for attempt in range(self.RATE_LIMIT_MAX_RETRIES + 1):
+            response = requests.get(url, headers={"X-Riot-Token": self.api_key}, timeout=10)
+            if response.status_code == 429 and attempt < self.RATE_LIMIT_MAX_RETRIES:
+                try:
+                    wait_seconds = float(response.headers.get("Retry-After", self.RATE_LIMIT_DEFAULT_WAIT_SECONDS))
+                except ValueError:
+                    wait_seconds = self.RATE_LIMIT_DEFAULT_WAIT_SECONDS
+                time.sleep(wait_seconds)
+                continue
+            response.raise_for_status()
+            return response.json()
+        raise AssertionError("unreachable")  # loop always returns or raises on its final iteration
 
     def get_account_by_riot_id(self, game_name: str, tag_line: str) -> RiotAccount:
         url = (
