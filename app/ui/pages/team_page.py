@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 import streamlit as st
 from sqlalchemy.orm import Session
 
@@ -118,6 +120,16 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             # has no way to find it and always shows its "generate a team
             # first" empty state.
             st.session_state["last_balance_result"] = chosen
+            # A fresh token per saved combo - match_page.py stamps its own
+            # OCR session state with whatever token was current when the OCR
+            # screenshot was parsed, and discards that OCR state the moment
+            # this token moves on to a new combo. Without this, an OCR
+            # result parsed against an earlier combo can silently survive
+            # into a *different* combo's match record if the rosters
+            # overlap (very common - a night's matches usually reuse most
+            # of the same signup pool), attributing the wrong K/D/A to
+            # whichever players happen to be on both rosters.
+            st.session_state["match_context_token"] = str(uuid.uuid4())
             try:
                 team_service.log_decision(context, chosen_rank=chosen_rank + 1, reason=save_reason or None)
             except Exception:

@@ -14,12 +14,71 @@ from app.services.match_service import MatchService
 from app.utils.exceptions import PermissionDeniedError
 
 
+def _match_detail_stats_by_kda(
+    participants: list[dict], detail_stats: dict[str, list]
+) -> tuple[int, list[str]]:
+    """Joins the detail (CS/vision/damage/gold) screenshot's columns back to
+    the main scoreboard's participants by K/D/A - the detail screenshot has
+    no names, and its column order isn't guaranteed to match the
+    scoreboard's row order (observed directly: one team's order matched,
+    the other team's didn't), so KDA is the most reliable join key
+    available. It is not a true identifier though: two participants can
+    genuinely share one (e.g. two 0/0/0 supports in a short game). Mutates
+    each *unambiguously* matched participant dict in place with its stats.
+    Returns (matched_count, ambiguous_names) - names sharing a KDA with at
+    least one other participant are deliberately left unmatched rather than
+    guessed, since silently assigning one player's stats to a different
+    player who happens to share their KDA would be wrong data with no
+    indication anything went wrong."""
+    by_kda: dict[tuple[int, int, int], list[dict]] = {}
+    for p in participants:
+        by_kda.setdefault((p["kills"], p["deaths"], p["assists"]), []).append(p)
+    ambiguous_names = [p["raw_name"] for group in by_kda.values() if len(group) > 1 for p in group]
+
+    kda_order = detail_stats.get("kda", [])
+    matched_count = 0
+    for i, kda in enumerate(kda_order):
+        candidates = by_kda.get(tuple(kda), [])
+        if len(candidates) != 1:
+            continue
+        target = candidates[0]
+        for stat_name in ("cs", "vision_score", "damage", "gold"):
+            values = detail_stats.get(stat_name, [])
+            if i < len(values):
+                target[stat_name] = values[i]
+        matched_count += 1
+    return matched_count, ambiguous_names
+
+
+def _is_stale_ocr(ocr_parsed_token: str | None, current_match_token: str | None) -> bool:
+    """True when previously-parsed OCR data was captured under a different
+    match context (a different saved team combo) than the one now active -
+    see team_page.py's save handler for why reusing it across combos is
+    unsafe. A missing token on either side (nothing parsed yet, or a combo
+    saved before this token existed) is conservatively treated as stale."""
+    return ocr_parsed_token != current_match_token
+
+
 def render(session: Session, server_id: int, actor: ServerMembership) -> None:
     st.header("경기 저장")
     result = st.session_state.get("last_balance_result")
     if result is None:
         st.info("먼저 '팀 생성' 메뉴에서 팀을 만들어주세요.")
         return
+
+    # ocr_parsed is stamped (below) with whatever match_context_token was
+    # current when it was parsed. team_page.py mints a new token every time
+    # a *different* combo is saved into last_balance_result, so a token
+    # mismatch here means this OCR data was read for an earlier combo, not
+    # the one we're about to record a match for - it must not carry over
+    # (see team_page.py's save handler for why: overlapping rosters would
+    # otherwise silently inherit the wrong K/D/A). No token at all (a combo
+    # saved before this token scheme existed in this session) is treated
+    # the same way, for safety.
+    current_token = st.session_state.get("match_context_token")
+    if _is_stale_ocr(st.session_state.get("ocr_parsed_token"), current_token):
+        st.session_state.pop("ocr_parsed", None)
+        st.session_state.pop("ocr_parsed_token", None)
 
     team_options = {f"{team.index + 1}팀": team.index for team in result.teams}
     all_players = {p.nickname: p for team in result.teams for p in team.players}
@@ -44,6 +103,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             st.error(str(exc))
         else:
             st.session_state["ocr_parsed"] = parsed.model_dump()
+            st.session_state["ocr_parsed_token"] = current_token
 
     ocr_stats_by_player_id: dict[int, dict] = {}
     detected_winner_label = None
@@ -69,30 +129,14 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             except NotImplementedError as exc:
                 st.error(str(exc))
             else:
-                # Column order in the detail screenshot isn't guaranteed to
-                # match the scoreboard's row order, so join on the K/D/A
-                # tuple (near-unique within one match) instead of position.
                 participants = parsed_state["participants"]
-                by_kda = {
-                    (p["kills"], p["deaths"], p["assists"]): p for p in participants
-                }
-                kda_order = detail_stats.get("kda", [])
-                matched_count = 0
-                for i, kda in enumerate(kda_order):
-                    target = by_kda.get(tuple(kda))
-                    if target is None:
-                        continue
-                    for stat_name in ("cs", "vision_score", "damage", "gold"):
-                        values = detail_stats.get(stat_name, [])
-                        if i < len(values):
-                            target[stat_name] = values[i]
-                    matched_count += 1
+                matched_count, ambiguous_names = _match_detail_stats_by_kda(participants, detail_stats)
                 st.session_state["ocr_parsed"] = parsed_state
                 if matched_count < len(participants):
-                    st.warning(
-                        f"{matched_count}/{len(participants)}명만 KDA로 매칭됐습니다. "
-                        "나머지는 표에서 직접 채워주세요."
-                    )
+                    message = f"{matched_count}/{len(participants)}명만 KDA로 매칭됐습니다. 나머지는 표에서 직접 채워주세요."
+                    if ambiguous_names:
+                        message += f" (KDA가 겹쳐 자동 매칭이 불가능한 참가자: {', '.join(ambiguous_names)})"
+                    st.warning(message)
                 st.rerun()
 
         st.caption("파싱 결과 - raw_name이 참가자와 안 맞으면 직접 이름으로 고쳐주세요.")
@@ -119,7 +163,8 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
                 }
 
         if st.button("스크린샷 데이터 지우기"):
-            del st.session_state["ocr_parsed"]
+            st.session_state.pop("ocr_parsed", None)
+            st.session_state.pop("ocr_parsed_token", None)
             st.rerun()
 
     labels = list(team_options.keys())
@@ -145,5 +190,5 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             st.error(f"권한이 없습니다: {exc}")
         else:
             st.success(f"경기 저장 완료 (AI MVP: player_id={match.ai_mvp_player_id})")
-            for key in ("last_balance_result", "ocr_parsed"):
+            for key in ("last_balance_result", "ocr_parsed", "ocr_parsed_token", "match_context_token"):
                 st.session_state.pop(key, None)
