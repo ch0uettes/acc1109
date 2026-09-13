@@ -315,8 +315,17 @@ class PlayerService:
         # active roster at all. Reviving that same row (with fresh data)
         # is what "re-adding" a returning player actually means here -
         # their match/rating history is already tied to this row's id.
+        #
+        # An ACTIVE match with no puuid on file is a manual-entry player
+        # (this server's nickname is its only real identity signal, by
+        # design - see the unique constraint) who has simply never been
+        # linked to a Riot account before now: registering the same
+        # nickname through Riot ID lookup is that link happening, not a
+        # genuine duplicate, so it's treated the same as reviving an
+        # inactive row rather than rejected. Only an active match that
+        # *already* has a puuid (a real, already-linked duplicate) blocks.
         existing = self.repo.get_by_puuid(puuid) or self.repo.get_by_nickname(nickname)
-        if existing is not None and existing.is_active:
+        if existing is not None and existing.is_active and existing.puuid:
             raise AppError(
                 f"'{nickname}'은(는) 이미 등록된 참가자입니다. 정보를 최신으로 갱신하려면 "
                 "참가자 목록 아래 '참가자 수정 / 삭제'에서 선택 후 '정보 새로고침'을 사용해주세요."

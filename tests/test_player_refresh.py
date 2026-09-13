@@ -63,6 +63,33 @@ def test_register_player_rejects_a_duplicate_of_an_active_player(session):
         _register(service, "대상", rank)
 
 
+def test_register_player_links_an_existing_manual_entry_with_the_same_nickname(session):
+    """Regression test for a real-world case found via a production data
+    export: a server often already has an older manual-entry ("직접 입력")
+    player under a common name (no puuid at all, since manual entry never
+    has one) before that same real person is ever registered through
+    Riot ID lookup. That must be treated as linking their real account to
+    the same identity, not a genuine duplicate - the manual entry has
+    nothing to conflict with (nickname is this server's only identity
+    signal for a puuid-less row) and a "no puuid, use 정보 새로고침 instead"
+    dead end would leave no way to ever attach a Riot account at all."""
+    service = PlayerService(session, server_id=1)
+    manual = service.create_player(
+        Player(nickname="강민수", tier=Tier.SILVER, division=Division.IV, lp=48, main_role=Position.MID),
+        actor_role=Role.SERVER_ADMIN,
+    )
+    assert manual.puuid is None
+
+    rank = RankInfo(tier=Tier.GOLD, division=Division.II, lp=45, wins=10, losses=5)
+    service.riot_client = FakeRiotAPIClient(rank)
+    linked = _register(service, "강민수", rank)
+
+    assert linked.id == manual.id  # same row, now linked - not a rejected duplicate
+    assert linked.puuid == "fake-puuid"
+    assert linked.tier == Tier.GOLD
+    assert linked.rating_source == RatingSource.CURRENT_SEASON
+
+
 def test_register_player_revives_a_deactivated_player_by_puuid(session):
     """Regression test for the reported bug: re-registering someone whose
     old row was soft-deleted used to hit the (server_id, puuid) unique
