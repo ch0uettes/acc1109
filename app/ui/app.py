@@ -7,6 +7,7 @@ from app.database.base import SessionLocal, init_db
 from app.models.server_membership import ServerMembership
 from app.services.server_service import ServerService
 from app.ui.pages import match_page, player_page, server_admin_page, stats_page, team_page, vote_page
+from app.utils.exceptions import AppError
 
 PAGES = {
     "참가자 관리": player_page.render,
@@ -69,9 +70,13 @@ def _render_server_picker(server_service: ServerService) -> int | None:
         new_server_name = st.text_input("새 서버 이름", key="new_server_name")
         new_owner_name = st.text_input("내 이름 (Owner가 됩니다)", key="new_server_owner_name")
         if st.button("서버 만들기", key="create_server_btn") and new_server_name and new_owner_name:
-            created = server_service.create_server(new_server_name, owner_display_name=new_owner_name)
-            st.session_state["active_server_id"] = created.id
-            st.rerun()
+            try:
+                created = server_service.create_server(new_server_name, owner_display_name=new_owner_name)
+            except AppError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["active_server_id"] = created.id
+                st.rerun()
 
     servers = server_service.list_servers()
     if not servers:
@@ -100,8 +105,12 @@ def _render_actor_picker(server_service: ServerService, server_id: int) -> Serve
     with st.sidebar.expander("멤버 등록 (Player로 참가)", expanded=not members):
         new_member_name = st.text_input("내 이름", key="new_member_name")
         if st.button("참가", key="add_member_btn") and new_member_name:
-            server_service.add_player_member(server_id, new_member_name)
-            st.rerun()
+            try:
+                server_service.add_player_member(server_id, new_member_name)
+            except AppError as exc:
+                st.error(str(exc))
+            else:
+                st.rerun()
 
     members = server_service.list_members(server_id)
     labels = [f"{m.display_name} ({ROLE_LABEL[m.role.value]})" for m in members]

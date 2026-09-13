@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.balance.config import HardConstraintConfig, NormalizationConfig
@@ -13,7 +14,7 @@ from app.models.server import Server
 from app.models.server_membership import ServerMembership
 from app.services.rbac import Permission, require_permission
 from app.utils.enums import Role
-from app.utils.exceptions import AppError
+from app.utils.exceptions import AppError, DuplicateMembershipError, DuplicateServerError
 
 
 class MembershipNotFoundError(AppError):
@@ -35,7 +36,15 @@ class ServerService:
     def create_server(self, name: str, owner_display_name: str, discord_guild_id: str | None = None) -> Server:
         """The user who creates a Server automatically becomes its Owner -
         every Server has exactly one at all times."""
-        server = self.server_repo.add(Server(name=name, discord_guild_id=discord_guild_id, created_at=datetime.utcnow()))
+        try:
+            server = self.server_repo.add(
+                Server(name=name, discord_guild_id=discord_guild_id, created_at=datetime.utcnow())
+            )
+        except IntegrityError as exc:
+            self.server_repo.session.rollback()
+            raise DuplicateServerError(
+                f"'{discord_guild_id}'는 이미 다른 서버에 연결되어 있습니다"
+            ) from exc
         owner = self.membership_repo.add(
             ServerMembership(
                 server_id=server.id,
@@ -62,19 +71,35 @@ class ServerService:
     def add_player_member(self, server_id: int, display_name: str, discord_id: str | None = None) -> ServerMembership:
         """Self-registration as a base Player - every identity gets this
         much access with no permission check, matching the Player role's
-        baseline (link Riot account, join matches, vote, view stats)."""
+        baseline (link Riot account, join matches, vote, view stats).
+
+        The existence check below is inherently a check-then-insert (no
+        surrounding transaction lock), so it doesn't fully close the race
+        window between two near-simultaneous calls for the same name -
+        the unique constraint on (server_id, display_name) is what
+        actually prevents a duplicate row; this just turns that into a
+        clear domain exception instead of a raw, uncaught IntegrityError
+        that would otherwise crash the page and leave the session's
+        transaction unusable for the rest of the request."""
         existing = self.get_member(server_id, display_name)
         if existing is not None:
             return existing
-        return self.membership_repo.add(
-            ServerMembership(
-                server_id=server_id,
-                display_name=display_name,
-                discord_id=discord_id,
-                role=Role.PLAYER,
-                created_at=datetime.utcnow(),
+        try:
+            return self.membership_repo.add(
+                ServerMembership(
+                    server_id=server_id,
+                    display_name=display_name,
+                    discord_id=discord_id,
+                    role=Role.PLAYER,
+                    created_at=datetime.utcnow(),
+                )
             )
-        )
+        except IntegrityError as exc:
+            self.membership_repo.session.rollback()
+            existing = self.get_member(server_id, display_name)
+            if existing is not None:
+                return existing
+            raise DuplicateMembershipError(f"'{display_name}' 멤버 등록에 실패했습니다") from exc
 
     def promote_to_server_admin(
         self, server_id: int, actor_display_name: str, target_display_name: str, reason: str | None = None
