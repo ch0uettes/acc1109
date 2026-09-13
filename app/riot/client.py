@@ -180,7 +180,18 @@ class LiveRiotAPIClient(RiotAPIClient):
         for match_id in match_ids:
             detail_url = f"https://{self.region}.api.riotgames.com/lol/match/v5/matches/{match_id}"
             detail = self._get(detail_url)
-            participant = next(p for p in detail["info"]["participants"] if p["puuid"] == puuid)
+            participant = next((p for p in detail["info"]["participants"] if p["puuid"] == puuid), None)
+            if participant is None:
+                # match_id came from this exact puuid's own /ids lookup, so
+                # this "shouldn't" happen - but it does in practice (a
+                # renamed/merged account whose historical match data still
+                # references an old puuid, a data inconsistency right after
+                # the match completes, ...), observed directly in
+                # production as an uncaught StopIteration crashing the
+                # whole position-inference pass. One unreadable match must
+                # not take out every other match in the batch.
+                time.sleep(MATCH_DETAIL_REQUEST_DELAY_SECONDS)
+                continue
             position = _TEAM_POSITION_MAP.get(participant.get("teamPosition", ""), Position.MID)
             entries.append(
                 MatchHistoryEntry(

@@ -152,3 +152,36 @@ def test_get_match_history_maps_team_position_to_domain_position():
     assert [e.match_id for e in entries] == ["KR_1", "KR_2"]
     assert entries[0].position.value == "MID"
     assert entries[1].position.value == "ADC"
+
+
+def test_get_match_history_skips_a_match_missing_the_queried_puuid():
+    """Regression test: a match returned by this exact puuid's own /ids
+    lookup can still come back from the detail endpoint without that
+    puuid anywhere in its participants (a renamed/merged account whose
+    historical match data still references an old puuid, or a data
+    inconsistency right after the match completes - observed directly in
+    production). next() with no default raised an uncaught StopIteration
+    there, crashing position inference entirely instead of just skipping
+    that one unreadable match."""
+    puuid = "some-puuid"
+
+    def _get(url: str, headers=None, timeout=None):
+        response = MagicMock(ok=True)
+        if "/ids" in url:
+            response.json.return_value = ["KR_1", "KR_2"]
+        elif url.endswith("KR_1"):
+            # KR_1's detail data doesn't actually list `puuid` at all.
+            response.json.return_value = {
+                "info": {"participants": [{"puuid": "someone-else", "teamPosition": "TOP", "championName": "Garen", "win": True}]}
+            }
+        else:
+            response.json.return_value = _fake_match_detail(puuid, "MIDDLE")
+        return response
+
+    client = LiveRiotAPIClient(api_key="fake-key")
+    with patch("app.riot.client.requests.get", side_effect=_get):
+        with patch("app.riot.client.time.sleep"):
+            entries = client.get_match_history(puuid, count=2)
+
+    assert [e.match_id for e in entries] == ["KR_2"]
+    assert entries[0].position.value == "MID"
