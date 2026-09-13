@@ -116,3 +116,52 @@ def test_empty_file_returns_no_rows():
     csv = _csv_bytes("nickname,game_name,tag_line\n")
 
     assert parse_roster_file(csv, "roster.csv") == []
+
+
+def test_txt_with_inconsistent_header_and_space_separated_data_lines():
+    """Regression test for a real user file: the header line uses '/'
+    ("이름/닉네임") but every data line uses a plain space
+    ("허재혁 플루오린#0217"), with blank lines between entries. Sniffing a
+    delimiter from this (pandas' sep=None/engine="python" picked '/' from
+    the header alone, which doesn't apply to any data line) used to dump
+    every data row into a single column and leave the second column
+    entirely empty - nickname ended up as the whole unsplit
+    "허재혁 플루오린#0217" instead of just "허재혁". Neither ',' nor '\t'
+    appears anywhere in this file, so it must fall through to the
+    per-line whitespace parser instead."""
+    txt = (
+        "이름/닉네임\n"
+        "\n"
+        "허재혁 플루오린#0217\n"
+        "\n"
+        "강민수 KIRBY#ROK\n"
+        "\n"
+        "박준용 박준용#박준용\n"
+        "\n"
+        "배민창 ξςεχψ#777\n"
+    ).encode("utf-8")
+
+    rows = parse_roster_file(txt, "roster.txt")
+
+    assert len(rows) == 4
+    assert rows[0].nickname == "허재혁"
+    assert rows[0].game_name == "플루오린"
+    assert rows[0].tag_line == "0217"
+    assert rows[1].nickname == "강민수"
+    assert rows[1].game_name == "KIRBY"
+    assert rows[1].tag_line == "ROK"
+    assert rows[2].nickname == "박준용"
+    assert rows[2].game_name == "박준용"
+    assert rows[2].tag_line == "박준용"
+    assert rows[3].nickname == "배민창"
+    assert rows[3].game_name == "ξςεχψ"
+    assert rows[3].tag_line == "777"
+
+
+def test_txt_free_form_parser_skips_lines_with_no_hash_token():
+    txt = "이름/닉네임\n허재혁 플루오린#0217\n메모: 여기까지 등록 완료\n".encode("utf-8")
+
+    rows = parse_roster_file(txt, "roster.txt")
+
+    assert len(rows) == 1
+    assert rows[0].nickname == "허재혁"
