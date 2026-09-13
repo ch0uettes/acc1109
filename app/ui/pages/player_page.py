@@ -402,15 +402,33 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
         width="stretch",
     )
 
+    st.checkbox(
+        "포지션 자동 추천 건너뛰기 (속도 향상 - 등록 후 직접 수정 가능)",
+        key="bulk_skip_position",
+        help=(
+            "포지션 추천은 참가자 한 명당 최근 랭크 게임을 최대 100판까지 훑어보는 과정이라 "
+            "(라이엇 API 요청 제한 때문에 한 판씩 확인하며 조회) 인원이 많으면 전체 등록이 "
+            "여러 분 이상 걸릴 수 있습니다. 체크하면 이 조회를 생략해 훨씬 빨라지고, "
+            "모든 참가자가 주 포지션 MID로 등록되며 나중에 참가자 목록에서 직접 수정할 수 있습니다."
+        ),
+    )
+
     if st.button("일괄 조회 및 추가", key="bulk_riot_confirm_add"):
         added: list[str] = []
         needs_manual: list[str] = []
         failed: list[tuple[str, str]] = []
+        skip_position = st.session_state.get("bulk_skip_position", False)
 
-        for _, row in edited.iterrows():
+        total_rows = len(edited)
+        progress = st.progress(0.0)
+        status = st.empty()
+
+        for row_index, (_, row) in enumerate(edited.iterrows()):
+            progress.progress(row_index / total_rows)
             nickname = str(row.get("nickname") or "").strip()
             game_name = str(row.get("game_name") or "").strip()
             tag_line = str(row.get("tag_line") or "").strip()
+            status.write(f"처리 중 ({row_index + 1}/{total_rows}): {nickname or game_name or '(빈 행)'}")
             if not (nickname and game_name and tag_line):
                 failed.append((nickname or game_name or "(빈 행)", "닉네임/게임 이름/태그 중 비어 있는 값이 있습니다"))
                 continue
@@ -428,7 +446,7 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
                 needs_manual.append(nickname)
                 continue
 
-            recommendation = service.infer_position(puuid)
+            recommendation = None if skip_position else service.infer_position(puuid)
             main_role = recommendation.main if recommendation else Position.MID
             sub_role = recommendation.sub if recommendation else None
             opgg_result = service.resolve_peak_tier(game_name, tag_line, current)
@@ -472,6 +490,8 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
                 peak_note = f", 최고 티어 출처: OP.GG ({peak_achieved_season})"
             added.append(f"{player.nickname} ({RATING_SOURCE_LABEL[player.rating_source]}{peak_note})")
 
+        progress.progress(1.0)
+        status.write("처리 완료")
         del st.session_state["bulk_riot_ocr"]
 
         if added:
