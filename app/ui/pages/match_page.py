@@ -141,7 +141,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
 
         st.caption("파싱 결과 - raw_name이 참가자와 안 맞으면 직접 이름으로 고쳐주세요.")
         df = pd.DataFrame(parsed_state["participants"])
-        edited = st.data_editor(df, num_rows="dynamic", key="ocr_edit_table", use_container_width=True)
+        edited = st.data_editor(df, num_rows="dynamic", key="ocr_edit_table", width="stretch")
 
         if parsed_state["winning_team_index"] is not None:
             detected_winner_label = f"{parsed_state['winning_team_index'] + 1}팀"

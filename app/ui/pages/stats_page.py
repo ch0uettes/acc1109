@@ -30,7 +30,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
                 }
                 for p in leaderboard
             ],
-            use_container_width=True,
+            width="stretch",
         )
     else:
         st.info("데이터가 없습니다.")
@@ -64,5 +64,5 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             }
             for d in decisions
         ],
-        use_container_width=True,
+        width="stretch",
     )

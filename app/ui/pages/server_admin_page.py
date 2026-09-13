@@ -43,7 +43,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
     members = service.list_members(server_id)
     st.dataframe(
         [{"이름": m.display_name, "역할": ROLE_LABEL[m.role]} for m in members],
-        use_container_width=True,
+        width="stretch",
     )
 
     if has_permission(actor.role, Permission.PROMOTE_TO_SERVER_ADMIN):
@@ -78,7 +78,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             }
             for h in reversed(history)
         ],
-        use_container_width=True,
+        width="stretch",
     )
 
 

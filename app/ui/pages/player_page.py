@@ -101,7 +101,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
             }
             for p in players
         ],
-        use_container_width=True,
+        width="stretch",
     )
 
     _render_edit_delete(service, players, actor)
@@ -380,7 +380,7 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
         pd.DataFrame(parsed_rows)[["nickname", "game_name", "tag_line"]],
         num_rows="dynamic",
         key="bulk_riot_edit_table",
-        use_container_width=True,
+        width="stretch",
     )
 
     if st.button("일괄 조회 및 추가", key="bulk_riot_confirm_add"):

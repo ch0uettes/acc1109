@@ -156,7 +156,7 @@ def _render_combo(result) -> None:
                     }
                     for c in result.contributions
                 ],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
