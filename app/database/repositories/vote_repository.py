@@ -41,3 +41,15 @@ class VoteRepository(BaseRepository[VoteEntity]):
             .all()
         )
         return [_to_domain(e) for e in entities]
+
+    def get_existing_vote(self, match_id: int, voter_player_id: int) -> Vote | None:
+        entity = (
+            self.session.query(VoteEntity)
+            .filter(
+                VoteEntity.server_id == self.server_id,
+                VoteEntity.match_id == match_id,
+                VoteEntity.voter_player_id == voter_player_id,
+            )
+            .one_or_none()
+        )
+        return _to_domain(entity) if entity else None

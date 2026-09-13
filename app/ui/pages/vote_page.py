@@ -7,7 +7,7 @@ from app.models.server_membership import ServerMembership
 from app.services.match_service import MatchService
 from app.services.player_service import PlayerService
 from app.services.vote_service import VoteService
-from app.utils.exceptions import PermissionDeniedError
+from app.utils.exceptions import AppError, PermissionDeniedError
 
 
 def render(session: Session, server_id: int, actor: ServerMembership) -> None:
@@ -44,19 +44,29 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
 
     vote_service = VoteService(session, server_id)
 
-    with st.form("cast_vote"):
-        voter_label = st.selectbox("투표자", list(candidate_names.keys()))
-        voted_label = st.selectbox("MVP로 투표할 선수", list(candidate_names.keys()))
-        submitted = st.form_submit_button("투표하기")
+    if not candidate_names:
+        st.warning("이 경기의 참가자 정보를 찾을 수 없어 투표를 진행할 수 없습니다.")
+    else:
+        with st.form("cast_vote"):
+            voter_label = st.selectbox("투표자", list(candidate_names.keys()))
+            voted_label = st.selectbox("MVP로 투표할 선수", list(candidate_names.keys()))
+            submitted = st.form_submit_button("투표하기")
 
-        if submitted:
-            vote_service.cast_vote(
-                match_id=match.id,
-                voter_player_id=candidate_names[voter_label],
-                voted_player_id=candidate_names[voted_label],
-            )
-            st.success("투표 완료")
-            st.rerun()
+            if submitted:
+                try:
+                    vote_service.cast_vote(
+                        match_id=match.id,
+                        voter_player_id=candidate_names[voter_label],
+                        voted_player_id=candidate_names[voted_label],
+                        actor_role=actor.role,
+                    )
+                except PermissionDeniedError as exc:
+                    st.error(f"권한이 없습니다: {exc}")
+                except AppError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("투표 완료")
+                    st.rerun()
 
     st.subheader("현재 집계")
     leading_player_id = vote_service.tally_user_mvp(match.id)
