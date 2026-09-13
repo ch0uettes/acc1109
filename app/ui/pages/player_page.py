@@ -14,6 +14,7 @@ from app.models.server_membership import ServerMembership
 from app.ocr.extractor import build_ocr_extractor
 from app.rating.official import master_stage_from
 from app.rating.resolver import TierSnapshot
+from app.roster_import import UnsupportedRosterFileError, parse_roster_file
 from app.services.player_service import PlayerService
 from app.services.rbac import Permission, has_permission
 from app.utils.exceptions import AppError, PermissionDeniedError
@@ -332,13 +333,20 @@ def _render_riot_tab(service: PlayerService, actor: ServerMembership) -> None:
             st.rerun()
 
 
+_ROSTER_FILE_TYPES = ["png", "jpg", "jpeg", "csv", "txt", "xlsx", "xls"]
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
+
+
 def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> None:
-    """Bulk version of _render_riot_tab: one screenshot containing a whole
+    """Bulk version of _render_riot_tab: one file containing a whole
     roster's nickname + Riot ID (game#tag) per row, instead of typing each
-    player in one at a time. Same "OCR gives a first draft, human reviews
-    before anything is saved" contract as match_page.py's screenshot flow -
-    the extracted table is always editable before the actual Riot lookups/
-    registrations run.
+    player in one at a time. A screenshot goes through OCR
+    (app.ocr.extractor); a CSV/TXT/XLSX goes through app.roster_import
+    instead - same target shape (nickname/game_name/tag_line), just a more
+    reliable source than OCR when the operator already has one. Same "OCR
+    gives a first draft, human reviews before anything is saved" contract
+    as match_page.py's screenshot flow either way - the extracted table is
+    always editable before the actual Riot lookups/registrations run.
 
     Only auto-registers players who have a current-season rank (Official
     Rating - no operator judgment required). An unranked player needs an
@@ -348,28 +356,39 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
     and never silently assumed, so those rows are reported back for manual
     handling via the other two tabs instead of being registered here."""
     st.caption(
-        "닉네임과 라이엇 아이디(태그 포함)가 함께 보이는 참가자 명단 스크린샷을 업로드하면 "
-        "OCR로 읽어 표로 보여줍니다. 표에서 확인/수정 후 일괄 등록하세요."
+        "닉네임과 라이엇 아이디(태그 포함)가 함께 보이는 참가자 명단 스크린샷, 또는 CSV/TXT/엑셀 파일을 "
+        "업로드하면 표로 보여줍니다. 표에서 확인/수정 후 일괄 등록하세요."
     )
     uploaded = st.file_uploader(
-        "참가자 명단 스크린샷 업로드", type=["png", "jpg", "jpeg"], key="bulk_riot_uploader"
+        "참가자 명단 스크린샷 또는 CSV/TXT/엑셀 파일 업로드", type=_ROSTER_FILE_TYPES, key="bulk_riot_uploader"
     )
 
-    if uploaded is not None and st.button("스크린샷 분석", key="bulk_riot_analyze"):
-        with tempfile.NamedTemporaryFile(suffix=Path(uploaded.name).suffix, delete=False) as tmp:
-            tmp.write(uploaded.getvalue())
-            tmp_path = tmp.name
+    if uploaded is not None and st.button("파일 분석", key="bulk_riot_analyze"):
+        suffix = Path(uploaded.name).suffix.lower()
+        if suffix in _IMAGE_SUFFIXES:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(uploaded.getvalue())
+                tmp_path = tmp.name
 
-        try:
-            with st.spinner("닉네임/라이엇 아이디 인식 중..."):
-                extractor = build_ocr_extractor()
-                rows = extractor.extract_riot_ids(tmp_path)
-        except NotImplementedError as exc:
-            st.error(str(exc))
+            try:
+                with st.spinner("닉네임/라이엇 아이디 인식 중..."):
+                    extractor = build_ocr_extractor()
+                    rows = extractor.extract_riot_ids(tmp_path)
+            except NotImplementedError as exc:
+                st.error(str(exc))
+            else:
+                if not rows:
+                    st.warning("스크린샷에서 '이름#태그' 형태의 라이엇 아이디를 찾지 못했습니다.")
+                st.session_state["bulk_riot_ocr"] = [row.model_dump() for row in rows]
         else:
-            if not rows:
-                st.warning("스크린샷에서 '이름#태그' 형태의 라이엇 아이디를 찾지 못했습니다.")
-            st.session_state["bulk_riot_ocr"] = [row.model_dump() for row in rows]
+            try:
+                rows = parse_roster_file(uploaded.getvalue(), uploaded.name)
+            except UnsupportedRosterFileError as exc:
+                st.error(str(exc))
+            else:
+                if not rows:
+                    st.warning("파일에서 '이름#태그' 형태의 라이엇 아이디를 찾지 못했습니다.")
+                st.session_state["bulk_riot_ocr"] = [row.model_dump() for row in rows]
 
     parsed_rows = st.session_state.get("bulk_riot_ocr")
     if not parsed_rows:
