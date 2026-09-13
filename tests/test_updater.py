@@ -74,21 +74,71 @@ def test_expected_performance_jumps_when_underdog_massively_outperforms():
     assert new_rating > 10.0
 
 
-def test_expected_performance_neutral_falls_back_when_no_contribution_data():
+def test_expected_performance_no_contribution_data_falls_back_to_result_signal_only():
+    """With no contribution data on either side, performance_signal cancels
+    to (near) zero (actual defaults to the neutral 0.5, same as expected
+    for equal ratings) - the update is then driven entirely by whether the
+    match was actually won, not silently zeroed out regardless of result."""
     strategy = ExpectedPerformanceUpdateStrategy(normal_k=20.0)
     player = _make_player(official_rating=1500.0, internal_rating=0.0)
     # player.final_rating blends official_rating down (0.9 base weight at
     # games_played=0); match the opponent to that exact blended value so
-    # the Elo expectation comes out to precisely 0.5, isolating the
-    # no-contribution-data fallback this test is actually about.
+    # the Elo expectation comes out to precisely 0.5.
     opponent_rating = player.final_rating
 
-    context = _context(own_contribution=0.0, opponent_final_rating=opponent_rating, opponent_contribution=0.0)
+    win_context = _context(
+        won=True, own_contribution=0.0, opponent_final_rating=opponent_rating, opponent_contribution=0.0
+    )
+    loss_context = _context(
+        won=False, own_contribution=0.0, opponent_final_rating=opponent_rating, opponent_contribution=0.0
+    )
+
+    # performance_signal is 0 either way (0.5 actual - 0.5 expected);
+    # result_signal is +0.5 on a win, -0.5 on a loss - with the default
+    # 0.5/0.5 weighting that's a +-5.0 swing at k=20.
+    assert strategy.update(player, win_context) == pytest.approx(5.0, abs=1e-6)
+    assert strategy.update(player, loss_context) == pytest.approx(-5.0, abs=1e-6)
+
+
+def test_expected_performance_win_beats_loss_at_identical_performance():
+    """Core invariant: holding contribution/opponent-rating fixed, winning
+    must always net a higher update than losing - this is exactly the bug
+    (context.won was previously ignored entirely, see git history)."""
+    strategy = ExpectedPerformanceUpdateStrategy(normal_k=20.0)
+    player = _make_player(official_rating=1500.0, internal_rating=0.0)
+
+    same_performance = dict(own_contribution=50.0, opponent_final_rating=1500.0, opponent_contribution=50.0)
+    update_win = strategy.update(player, _context(won=True, **same_performance))
+    update_loss = strategy.update(player, _context(won=False, **same_performance))
+
+    assert update_win > update_loss
+
+
+def test_expected_performance_a_win_with_bad_performance_can_still_net_a_decrease():
+    """A win doesn't unconditionally raise the rating - badly underperforming
+    a strong expectation can still net a decrease despite winning."""
+    strategy = ExpectedPerformanceUpdateStrategy(normal_k=20.0)
+    player = _make_player(official_rating=1500.0, internal_rating=0.0)
+
+    # heavy favorite (expected ~0.9) who barely contributed (actual ~0.1)
+    context = _context(won=True, own_contribution=10.0, opponent_final_rating=880.0, opponent_contribution=90.0)
     new_rating = strategy.update(player, context)
 
-    # expected 0.5 (equal ratings) and actual defaults to 0.5 (no
-    # contribution data) -> they cancel out to (near) zero change
-    assert new_rating == pytest.approx(0.0, abs=1e-6)
+    assert new_rating < 0
+
+
+def test_expected_performance_a_loss_with_great_performance_can_still_net_an_increase():
+    """A loss doesn't unconditionally lower the rating - dramatically
+    outperforming a weak expectation can still net an increase despite
+    losing, so this isn't just win/loss wearing a performance costume."""
+    strategy = ExpectedPerformanceUpdateStrategy(normal_k=20.0)
+    player = _make_player(official_rating=1500.0, internal_rating=0.0)
+
+    # heavy underdog (expected ~0.1) who dominated the box score (actual ~0.9)
+    context = _context(won=False, own_contribution=90.0, opponent_final_rating=2120.0, opponent_contribution=10.0)
+    new_rating = strategy.update(player, context)
+
+    assert new_rating > 0
 
 
 def test_expected_performance_calibration_mode_amplifies_swing():

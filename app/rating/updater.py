@@ -50,23 +50,43 @@ class SimpleWinLossUpdateStrategy(RatingUpdateStrategy):
 
 
 class ExpectedPerformanceUpdateStrategy(RatingUpdateStrategy):
-    """Internal Rating moves on *actual vs expected* performance, not on
-    win/loss alone: a heavy favorite that performs exactly as expected
-    barely moves; a big underdog that dramatically outperforms jumps.
+    """Internal Rating moves on *actual vs expected*, evaluated on two
+    independent axes - not on win/loss alone, and (bug fixed here) not on
+    contribution alone either:
 
-    Expected performance is the standard Elo win-probability curve applied
-    to the Final Rating gap against a same-position opponent (or the
-    opposing team's average if no clean position match exists). Actual
-    performance is each side's Contribution Score expressed as a share of
-    the two combined - the same 0..1 shape as the Elo expectation, so the
-    two are directly comparable."""
+    - result_signal: did this side actually win, versus the Elo
+      win-probability the rating gap implied?
+    - performance_signal: did this side's Contribution Score (share of the
+      two sides' combined total) beat that same Elo expectation?
+
+    Both reuse the identical Elo expectation (`expected`, from the Final
+    Rating gap against a same-position opponent or the opposing team's
+    average), so they're directly comparable 0..1-shaped quantities and
+    blending them via `result_weight`/`performance_weight` (they sum to 1)
+    doesn't change the existing K-factor scale. A heavy favorite winning
+    exactly as expected barely moves either signal; a big underdog that
+    wins AND dramatically outperforms jumps on both. Contribution alone
+    used to decide the whole update, which meant a losing side with a
+    better stat line could still gain rating - result_signal is what
+    prevents that: holding performance fixed, a win always nets a higher
+    update than a loss.
+
+    `result_weight` defaults to an even 0.5/0.5 split with performance -
+    a reasonable starting point, not a finalized product ratio; callers
+    that want a different balance pass it in without touching this class."""
 
     def __init__(
-        self, normal_k: float = 20.0, calibration_k: float = 75.0, elo_scale: float = ELO_SCALE
+        self,
+        normal_k: float = 20.0,
+        calibration_k: float = 75.0,
+        elo_scale: float = ELO_SCALE,
+        result_weight: float = 0.5,
     ) -> None:
         self.normal_k = normal_k
         self.calibration_k = calibration_k
         self.elo_scale = elo_scale
+        self.result_weight = result_weight
+        self.performance_weight = 1.0 - result_weight
 
     def update(self, player: Player, context: MatchRatingContext) -> float:
         expected = 1.0 / (
@@ -74,7 +94,12 @@ class ExpectedPerformanceUpdateStrategy(RatingUpdateStrategy):
         )
 
         total_contribution = context.own_contribution + context.opponent_contribution
-        actual = context.own_contribution / total_contribution if total_contribution > 0 else 0.5
+        actual_performance = context.own_contribution / total_contribution if total_contribution > 0 else 0.5
+        actual_result = 1.0 if context.won else 0.0
+
+        performance_signal = actual_performance - expected
+        result_signal = actual_result - expected
+        combined_signal = self.result_weight * result_signal + self.performance_weight * performance_signal
 
         k = self.calibration_k if player.calibration_mode else self.normal_k
-        return player.internal_rating + k * (actual - expected)
+        return player.internal_rating + k * combined_signal

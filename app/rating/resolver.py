@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from app.rating.official import DIVISION_OFFSET, OfficialRatingCalculator, TIER_BASE_SCORE, blend_current_and_peak
+from app.rating.official import OfficialRatingCalculator, blend_current_and_peak
 from app.rating.official_strategy import CurrentTierPriorityStrategy, OfficialRatingStrategy
 from app.utils.enums import Division, RatingSource, Tier
 
@@ -55,9 +55,14 @@ class RatingResolution:
 def seed_rating_for_tier(tier: Tier, division: Division = Division.III) -> float:
     """Converts an operator's tier (+ optional division) judgment into a
     score, on the same scale as OfficialRatingCalculator so the two are
-    comparable. Division defaults to III (roughly mid-tier) when the
-    operator only has a coarse read; pass a real division for precision."""
-    return TIER_BASE_SCORE[tier] + DIVISION_OFFSET[division] + ASSUMED_SEED_LP
+    comparable - literally delegating to the same calculate_from() a real
+    tier/division/lp read goes through, so the two can never drift apart
+    (e.g. OfficialRatingCalculator skips the division term entirely for
+    MASTER; this used to add it anyway, scoring a Seed-rated "Master" 100+
+    points above an equivalent Riot-confirmed one). Division defaults to
+    III (roughly mid-tier) when the operator only has a coarse read; pass a
+    real division for precision - ignored for MASTER, same as a real read."""
+    return OfficialRatingCalculator().calculate_from(tier, division, ASSUMED_SEED_LP)
 
 
 class RatingCaseResolver:

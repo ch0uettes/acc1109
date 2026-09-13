@@ -20,7 +20,14 @@ from app.position.analyzer import PositionAnalyzer, RiotHistoryPositionAnalyzer
 from app.position.schemas import RoleRecommendation
 from app.rating.official import OfficialRatingCalculator
 from app.rating.official_strategy import CurrentTierPriorityStrategy, OfficialRatingStrategy
-from app.rating.resolver import RatingCaseResolver, RatingResolution, TierSnapshot, seed_rating_for_tier
+from app.rating.resolver import (
+    CONFIDENCE_MANUAL,
+    CONFIDENCE_SEED,
+    RatingCaseResolver,
+    RatingResolution,
+    TierSnapshot,
+    seed_rating_for_tier,
+)
 from app.riot.client import RiotAPIClient, build_riot_client
 from app.services.rbac import Permission, require_permission
 from app.utils.enums import Division, Position, RatingSource, Role, Tier
@@ -47,8 +54,8 @@ class PlayerService:
         self.server_id = server_id
         self.repo = PlayerRepository(session, server_id)
         self.season_rank_repo = SeasonRankRepository(session, server_id)
-        self.seed_rating_change_repo = SeedRatingChangeRepository(session)
-        self.internal_rating_change_repo = InternalRatingChangeRepository(session)
+        self.seed_rating_change_repo = SeedRatingChangeRepository(session, server_id)
+        self.internal_rating_change_repo = InternalRatingChangeRepository(session, server_id)
         self.server_repo = server_repo or ServerRepository(session)
         self.official_rating_strategy = official_rating_strategy or CurrentTierPriorityStrategy()
         self.riot_client = riot_client or build_riot_client()
@@ -59,9 +66,19 @@ class PlayerService:
         """Manual-entry path: the operator has typed an exact current tier
         they know to be true. `player.tier` must not be UNRANKED here - an
         operator who doesn't know a real tier should assign a Seed Rating
-        via register_player(..., seed_tier=...) instead."""
+        via register_player(..., seed_tier=...) instead.
+
+        Confidence here is CONFIDENCE_MANUAL (trusted-but-not-machine-
+        verified) - the same band RatingCaseResolver.resolve_manual()
+        documents for exactly this case, but this method (not that one) is
+        what the manual-entry UI actually calls, since it - unlike
+        resolve_manual() - supports the operator also entering a Peak Tier.
+        Was previously left at Player's bare default (0.5), silently
+        under-weighting every manually-added player relative to that
+        documented intent."""
         require_permission(actor_role, Permission.MANAGE_PLAYERS)
         player.official_rating = self.official_rating_strategy.calculate(player)
+        player.confidence = CONFIDENCE_MANUAL
         saved = self.repo.add(player)
         self._record_season_snapshot(saved)
         return saved
@@ -211,7 +228,19 @@ class PlayerService:
         reason: Optional[str] = None,
     ) -> Player:
         """The only path that changes an existing player's Seed Rating.
-        Always audited: old value, new value, who, when, why."""
+        Always audited: old value, new value, who, when, why.
+
+        Resets every field resolve_seed() would set for a brand-new Seed
+        registration - tier/division/lp to the UNRANKED baseline, and
+        confidence/calibration_mode to the Seed defaults - so a player
+        converted from a real tier (high confidence, calibration_mode
+        already False) doesn't keep stale values that contradict "this is
+        now a rough operator guess" (e.g. keeping a real division/LP next
+        to UNRANKED, or skipping the fast-recalibration window a fresh
+        guess is supposed to get). Deliberately leaves internal_rating and
+        games_played untouched - those are earned from real inhouse
+        matches and have nothing to do with where the base rating comes
+        from."""
         require_permission(actor_role, Permission.SET_SEED_RATING)
         player = self.repo.get(player_id)
         old_seed_rating = player.seed_rating
@@ -220,9 +249,13 @@ class PlayerService:
         updated = player.model_copy(
             update={
                 "tier": Tier.UNRANKED,
+                "division": Division.IV,
+                "lp": 0,
                 "official_rating": None,
                 "seed_rating": new_seed_rating,
                 "rating_source": RatingSource.SEED,
+                "confidence": CONFIDENCE_SEED,
+                "calibration_mode": True,
             }
         )
         saved = self.repo.update(updated)

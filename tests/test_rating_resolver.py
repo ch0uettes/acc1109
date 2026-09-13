@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.rating.official import OfficialRatingCalculator
 from app.rating.resolver import RatingCaseResolver, TierSnapshot, seed_rating_for_tier
 from app.utils.enums import Division, RatingSource, Tier
 
@@ -91,3 +92,18 @@ def test_resolve_seed_keeps_peak_as_metadata_only_and_does_not_score_it():
 def test_seed_rating_for_tier_lands_mid_tier():
     low = seed_rating_for_tier(Tier.SILVER)
     assert 800 < low < 1200  # strictly inside Silver's 400-point span
+
+
+def test_seed_rating_for_master_matches_a_real_master_reading_on_the_same_lp():
+    """Regression test: seed_rating_for_tier() used to add a division
+    offset for MASTER that OfficialRatingCalculator.calculate_from()
+    never applies (Master has no division), scoring an operator's
+    "roughly Master" guess 100+ points above an equivalent real
+    current-season Master reading. The two must land on the exact same
+    score for the same (assumed) LP, regardless of which division is
+    passed in - Master has no division."""
+    assumed_lp = 50  # ASSUMED_SEED_LP
+    real_master_score = OfficialRatingCalculator().calculate_from(Tier.MASTER, Division.IV, assumed_lp)
+
+    for division in Division:
+        assert seed_rating_for_tier(Tier.MASTER, division) == pytest.approx(real_master_score)

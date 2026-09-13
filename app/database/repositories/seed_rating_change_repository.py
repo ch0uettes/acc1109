@@ -21,8 +21,9 @@ def _to_domain(entity: SeedRatingChangeEntity) -> SeedRatingChange:
 
 
 class SeedRatingChangeRepository(BaseRepository[SeedRatingChangeEntity]):
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, server_id: int) -> None:
         super().__init__(session, SeedRatingChangeEntity)
+        self.server_id = server_id
 
     def add(self, change: SeedRatingChange) -> SeedRatingChange:
         entity = SeedRatingChangeEntity(
@@ -42,7 +43,10 @@ class SeedRatingChangeRepository(BaseRepository[SeedRatingChangeEntity]):
     def list_for_player(self, player_id: int) -> list[SeedRatingChange]:
         entities = (
             self.session.query(SeedRatingChangeEntity)
-            .filter(SeedRatingChangeEntity.player_id == player_id)
+            .filter(
+                SeedRatingChangeEntity.server_id == self.server_id,
+                SeedRatingChangeEntity.player_id == player_id,
+            )
             .order_by(SeedRatingChangeEntity.changed_at)
             .all()
         )

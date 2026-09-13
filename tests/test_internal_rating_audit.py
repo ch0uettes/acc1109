@@ -78,3 +78,22 @@ def test_internal_rating_override_requires_permission(session):
         service.override_internal_rating(player.id, 100.0, actor_role=Role.PLAYER, changed_by="누군가")
 
     assert service.internal_rating_history(player.id) == []
+
+
+def test_internal_rating_history_does_not_leak_across_servers(session):
+    """Regression test: InternalRatingChangeRepository.list_for_player()
+    used to filter only by player_id, never by server_id, unlike every
+    sibling repository - a Server B admin who somehow learns/guesses a
+    Server A player_id could otherwise retrieve Server A's rating-override
+    audit trail (old/new value, changed_by, reason)."""
+    server_a = PlayerService(session, server_id=1)
+    server_b = PlayerService(session, server_id=2)
+    player_a = server_a.create_player(_player("A유저"), actor_role=Role.SERVER_ADMIN)
+    server_a.override_internal_rating(
+        player_a.id, 300.0, actor_role=Role.SERVER_ADMIN, changed_by="admin_a", reason="A 서버 전용 사유"
+    )
+
+    assert len(server_a.internal_rating_history(player_a.id)) == 1
+    # Server B must see nothing for Server A's player_id, even though the
+    # id itself is a valid row in the underlying table.
+    assert server_b.internal_rating_history(player_a.id) == []

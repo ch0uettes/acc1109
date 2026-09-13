@@ -21,8 +21,9 @@ def _to_domain(entity: InternalRatingChangeEntity) -> InternalRatingChange:
 
 
 class InternalRatingChangeRepository(BaseRepository[InternalRatingChangeEntity]):
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, server_id: int) -> None:
         super().__init__(session, InternalRatingChangeEntity)
+        self.server_id = server_id
 
     def add(self, change: InternalRatingChange) -> InternalRatingChange:
         entity = InternalRatingChangeEntity(
@@ -42,7 +43,10 @@ class InternalRatingChangeRepository(BaseRepository[InternalRatingChangeEntity])
     def list_for_player(self, player_id: int) -> list[InternalRatingChange]:
         entities = (
             self.session.query(InternalRatingChangeEntity)
-            .filter(InternalRatingChangeEntity.player_id == player_id)
+            .filter(
+                InternalRatingChangeEntity.server_id == self.server_id,
+                InternalRatingChangeEntity.player_id == player_id,
+            )
             .order_by(InternalRatingChangeEntity.changed_at)
             .all()
         )

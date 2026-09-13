@@ -8,7 +8,7 @@ from app.database.base import Base
 from app.riot.client import RiotAPIClient
 from app.riot.schemas import ChampionMasteryEntry, MatchHistoryEntry, RankInfo, RiotAccount
 from app.services.player_service import PlayerService
-from app.utils.enums import Position, Role, Tier
+from app.utils.enums import Division, Position, Role, Tier
 
 
 class UnrankedRiotAPIClient(RiotAPIClient):
@@ -116,3 +116,61 @@ def test_set_seed_rating_forces_unranked_tier_and_clears_official_rating(session
 
     assert updated.tier == Tier.UNRANKED
     assert updated.official_rating is None
+
+
+class RankedRiotAPIClient(RiotAPIClient):
+    def get_account_by_riot_id(self, game_name: str, tag_line: str) -> RiotAccount:
+        return RiotAccount(puuid="fake-puuid", game_name=game_name, tag_line=tag_line)
+
+    def get_rank(self, puuid: str) -> RankInfo | None:
+        return RankInfo(tier=Tier.GOLD, division=Division.II, lp=45, wins=10, losses=5)
+
+    def has_ranked_solo_history(self, puuid: str) -> bool:
+        return True
+
+    def get_match_history(self, puuid: str, count: int = 20, start: int = 0) -> list[MatchHistoryEntry]:
+        raise NotImplementedError
+
+    def get_champion_mastery(self, puuid: str) -> list[ChampionMasteryEntry]:
+        raise NotImplementedError
+
+
+def test_set_seed_rating_resets_confidence_calibration_division_and_lp(session):
+    """Regression test: converting an existing player (registered with a
+    real current-season rank, so high confidence/no calibration/a real
+    division+LP) to Seed Rating must reset every one of those fields to
+    the same baseline resolve_seed() uses for a brand-new Seed
+    registration - otherwise the player is left in a self-contradictory
+    state (e.g. UNRANKED tier next to a stale Gold II 45LP)."""
+    service = PlayerService(session, server_id=1, riot_client=RankedRiotAPIClient())
+    puuid, current = service.probe_current_season("Game", "KR1")
+    player = service.register_player(
+        "RankedPlayer", puuid, Position.TOP, current, peak=None, actor_role=Role.SERVER_ADMIN
+    )
+    assert player.division == Division.II and player.lp == 45  # sanity: real rank data carried through
+    assert player.confidence > 0.9 and player.calibration_mode is False  # sanity: current-season confidence band
+
+    updated = service.set_seed_rating(
+        player.id, Tier.SILVER, changed_by="admin", actor_role=Role.SERVER_ADMIN
+    )
+
+    assert updated.division == Division.IV
+    assert updated.lp == 0
+    assert updated.calibration_mode is True
+    assert updated.confidence < 0.5  # the low Seed-Rating confidence band, not the stale current-season one
+
+
+def test_seed_rating_history_does_not_leak_across_servers(session):
+    """Regression test: SeedRatingChangeRepository.list_for_player() used
+    to filter only by player_id, never by server_id - same isolation gap
+    as InternalRatingChangeRepository's (see test_internal_rating_audit.py)."""
+    server_a = PlayerService(session, server_id=1, riot_client=UnrankedRiotAPIClient())
+    server_b = PlayerService(session, server_id=2)
+    puuid, current = server_a.probe_current_season("Game", "KR1")
+    player_a = server_a.register_player(
+        "A유저", puuid, Position.TOP, current, peak=None, actor_role=Role.SERVER_ADMIN,
+        seed_tier=Tier.SILVER, changed_by="admin_a",
+    )
+
+    assert len(server_a.seed_rating_history(player_a.id)) == 1
+    assert server_b.seed_rating_history(player_a.id) == []
