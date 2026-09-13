@@ -80,6 +80,7 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
         [
             {
                 "닉네임": p.nickname,
+                "Riot 연동": "연동됨" if p.puuid else "미연동",
                 "현재 티어": _tier_display(p.tier, p.division, p.lp),
                 "최고 티어": _tier_display(p.peak_tier, p.peak_division, p.peak_lp),
                 "최고 티어 달성 시즌": p.peak_achieved_season or ("직접 입력" if p.peak_tier else "-"),
