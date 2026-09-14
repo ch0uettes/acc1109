@@ -10,6 +10,7 @@ from app.balance.strategy import STRATEGY_REGISTRY
 from app.models.server_membership import ServerMembership
 from app.position.schemas import RolePreference
 from app.position.signup import PlayerSignup
+from app.roster_export import tier_label, saved_teams_to_txt, saved_teams_to_xlsx_bytes
 from app.services.player_service import PlayerService
 from app.services.rbac import Permission, has_permission
 from app.services.server_service import ServerService
@@ -55,6 +56,8 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
         hard_constraints=HardConstraintLayer(server.hard_constraint_config) if server else None,
         constraint_priorities=server.constraint_priorities if server else None,
     )
+
+    _render_saved_teams(team_service)
 
     players = player_service.list_players()
     options = {f"{p.nickname} ({p.tier.value})": p for p in players}
@@ -138,6 +141,47 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
                 # 별개다. 사용자에게는 팀 저장 성공만 보이면 충분하고, 기록 실패는
                 # 조용히 넘어간다 (매치 진행에 지장을 주면 안 되므로).
                 pass
+
+
+def _render_saved_teams(team_service: TeamService) -> None:
+    """Reloads a past save_generated_teams() call exactly as it was saved
+    (see TeamService.load_saved_run) - read-only browsing/export, no
+    permission gate beyond already having access to this page, since
+    nothing here writes anything."""
+    runs = team_service.list_saved_runs(limit=20)
+    if not runs:
+        return
+
+    with st.expander(f"저장된 팀 불러오기 (최근 {len(runs)}개)"):
+        labels = {f"{ts:%Y-%m-%d %H:%M:%S}": ts for ts in runs}
+        selected_label = st.selectbox("불러올 저장 시점 선택", list(labels.keys()), key="load_saved_run")
+        generated_at = labels[selected_label]
+        saved_teams = team_service.load_saved_run(generated_at)
+
+        columns = st.columns(len(saved_teams))
+        for col, team in zip(columns, saved_teams):
+            with col:
+                st.markdown(f"**{team.index + 1}팀**")
+                for entry in sorted(team.entries, key=lambda e: list(Position).index(e.position)):
+                    name = entry.player.nickname if entry.player else "알 수 없음"
+                    st.write(f"- {entry.position.value}: {name} ({tier_label(entry.player)})")
+
+        dcol1, dcol2 = st.columns(2)
+        file_stamp = f"{generated_at:%Y%m%d_%H%M%S}"
+        dcol1.download_button(
+            "TXT로 다운로드",
+            data=saved_teams_to_txt(saved_teams).encode("utf-8"),
+            file_name=f"team_{file_stamp}.txt",
+            mime="text/plain",
+            key=f"download_txt_{file_stamp}",
+        )
+        dcol2.download_button(
+            "엑셀로 다운로드",
+            data=saved_teams_to_xlsx_bytes(saved_teams),
+            file_name=f"team_{file_stamp}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"download_xlsx_{file_stamp}",
+        )
 
 
 def _render_combo(result) -> None:

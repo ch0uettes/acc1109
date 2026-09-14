@@ -11,6 +11,7 @@ from app.balance.execution_context import ExecutionContext
 from app.balance.result import BalanceResult
 from app.balance.strategy import IBalanceStrategy
 from app.database.repositories.decision_log_repository import DecisionLogRepository
+from app.database.repositories.player_repository import PlayerRepository
 from app.database.repositories.team_repository import TeamRepository
 from app.models.decision_log import (
     DecisionLogEntry,
@@ -20,9 +21,10 @@ from app.models.decision_log import (
     SearchStatisticsSnapshot,
     VersionMetadataSnapshot,
 )
+from app.models.team import SavedRosterEntry, SavedTeam
 from app.position.signup import PlayerSignup
 from app.services.rbac import Permission, require_permission
-from app.utils.enums import Role
+from app.utils.enums import Position, Role
 
 
 class TeamService:
@@ -38,6 +40,7 @@ class TeamService:
     ) -> None:
         self.server_id = server_id
         self.repo = TeamRepository(session, server_id)
+        self.player_repo = PlayerRepository(session, server_id)
         self.decision_log_repo = DecisionLogRepository(session, server_id)
         self.balancer = balancer or TeamBalancer(
             strategy=strategy,
@@ -150,3 +153,29 @@ class TeamService:
 
     def recent_decisions(self, limit: int = 20) -> list[DecisionLogEntry]:
         return self.decision_log_repo.list_for_server(limit=limit)
+
+    def list_saved_runs(self, limit: int = 20) -> list[datetime]:
+        """Timestamps of past save_generated_teams() calls, most recent
+        first - each one can be passed to load_saved_run() to reload that
+        exact roster."""
+        return self.repo.list_runs(limit=limit)
+
+    def load_saved_run(self, generated_at: datetime) -> list[SavedTeam]:
+        """Reassembles one past save_generated_teams() call into a
+        display-ready roster - current Player data (nickname/tier/etc.),
+        not a historical snapshot, since team_players only ever stored
+        player_id+position (a player's own record is the one source of
+        truth for everything else about them). include_inactive=True so a
+        since-deactivated participant still shows up correctly instead of
+        silently vanishing from a roster they were genuinely part of."""
+        players_by_id = {p.id: p for p in self.player_repo.list(include_inactive=True)}
+        return [
+            SavedTeam(
+                index=team_index,
+                entries=[
+                    SavedRosterEntry(position=Position(position), player=players_by_id.get(player_id))
+                    for player_id, position in entries
+                ],
+            )
+            for team_index, entries in self.repo.get_run(generated_at)
+        ]

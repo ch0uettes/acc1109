@@ -45,3 +45,23 @@ class Team(BaseModel):
         if self.slots is not None:
             return next(s.position for s in self.slots if s.player.id == player_id)
         return next(p for p in self.players if p.id == player_id).main_role
+
+
+class SavedRosterEntry(BaseModel):
+    """One player's position within a previously-saved (persisted) team -
+    reloaded from the `teams`/`team_players` tables, not a fresh balancer
+    result. Deliberately NOT a TeamSlot: role_penalty/role_source are
+    scoring-time artifacts that were never persisted alongside the saved
+    roster, so reconstructing them here would just be guessing."""
+
+    position: Position
+    player: Optional[Player]
+
+
+class SavedTeam(BaseModel):
+    """One team from a previously-saved balancer run, as reloaded via
+    TeamService.load_saved_run() - see SavedRosterEntry for why this isn't
+    just a plain Team/TeamSlot."""
+
+    index: int
+    entries: list[SavedRosterEntry]
