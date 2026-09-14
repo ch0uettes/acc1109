@@ -106,7 +106,61 @@ def render(session: Session, server_id: int, actor: ServerMembership) -> None:
         width="stretch",
     )
 
+    _render_bulk_refresh(service, players, actor)
     _render_edit_delete(service, players, actor)
+
+
+def _render_bulk_refresh(service: PlayerService, players: list[Player], actor: ServerMembership) -> None:
+    """Same job as the per-player '정보 새로고침' button in 참가자 수정/삭제
+    below, just for several Riot-linked participants at once (e.g. after a
+    season split, before generating teams for a big event) instead of
+    clicking through each one individually."""
+    linked_players = [p for p in players if p.puuid]
+    if not linked_players:
+        return
+
+    with st.expander(f"Riot 연동 참가자 일괄 새로고침 ({len(linked_players)}명 연동됨)"):
+        options = {p.nickname: p for p in linked_players}
+        select_all = st.checkbox("전체 선택", key="bulk_refresh_select_all")
+        # No explicit `key` here on purpose - with one, this widget's
+        # session_state value would keep winning over a freshly computed
+        # `default` on every later rerun, so toggling "전체 선택" off
+        # wouldn't actually clear the selection back down (the exact
+        # stale-widget-key class of bug fixed elsewhere in this page).
+        selected_names = st.multiselect(
+            "새로고침할 참가자 선택 (전체 선택 체크 시 수동 선택은 초기화됩니다)",
+            list(options.keys()),
+            default=list(options.keys()) if select_all else [],
+        )
+
+        if st.button("선택한 참가자 정보 새로고침", key="bulk_refresh_confirm", disabled=not selected_names):
+            updated: list[str] = []
+            failed: list[tuple[str, str]] = []
+            total = len(selected_names)
+            progress = st.progress(0.0)
+            status = st.empty()
+
+            for i, name in enumerate(selected_names):
+                progress.progress(i / total)
+                status.write(f"새로고침 중 ({i + 1}/{total}): {name}")
+                player = options[name]
+                try:
+                    _, message = service.refresh_from_riot(player.id, actor_role=actor.role)
+                except PermissionDeniedError as exc:
+                    failed.append((name, f"권한이 없습니다: {exc}"))
+                except AppError as exc:
+                    failed.append((name, str(exc)))
+                else:
+                    updated.append(f"{name} ({message})")
+
+            progress.progress(1.0)
+            status.write("처리 완료")
+
+            if updated:
+                st.success(f"{len(updated)}명 새로고침 완료:\n" + "\n".join(f"- {u}" for u in updated))
+            if failed:
+                st.error("새로고침 실패:\n" + "\n".join(f"- {name}: {reason}" for name, reason in failed))
+            st.rerun()
 
 
 def _render_manual_tab(service: PlayerService, actor: ServerMembership) -> None:
@@ -420,7 +474,7 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
 
     if st.button("일괄 조회 및 추가", key="bulk_riot_confirm_add"):
         added: list[str] = []
-        needs_manual: list[str] = []
+        needs_manual: list[dict] = []
         failed: list[tuple[str, str]] = []
         skip_position = st.session_state.get("bulk_skip_position", False)
 
@@ -447,14 +501,30 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
                 failed.append((nickname, f"Riot API 조회 실패: {exc}"))
                 continue
 
+            recommendation = None if skip_position else service.infer_position(puuid)
+            # resolve_peak_tier() already handles current=None by falling
+            # back to the raw OP.GG lookup unchanged (see its docstring) -
+            # calling it unconditionally here means an unranked player's
+            # OP.GG peak (if any) becomes a ready-made hint in the Seed
+            # Rating follow-up below, instead of the operator having to
+            # remember or re-look-up that player's history by hand.
+            opgg_result = service.resolve_peak_tier(game_name, tag_line, current)
+
             if current is None:
-                needs_manual.append(nickname)
+                needs_manual.append(
+                    {
+                        "nickname": nickname,
+                        "puuid": puuid,
+                        "game_name": game_name,
+                        "tag_line": tag_line,
+                        "recommendation": recommendation,
+                        "opgg_peak": opgg_result,
+                    }
+                )
                 continue
 
-            recommendation = None if skip_position else service.infer_position(puuid)
             main_role = recommendation.main if recommendation else Position.MID
             sub_role = recommendation.sub if recommendation else None
-            opgg_result = service.resolve_peak_tier(game_name, tag_line, current)
             peak = opgg_result[0] if opgg_result else None
             peak_achieved_season = opgg_result[1] if opgg_result else None
 
@@ -499,15 +569,129 @@ def _render_bulk_ocr_tab(service: PlayerService, actor: ServerMembership) -> Non
         status.write("처리 완료")
         del st.session_state["bulk_riot_ocr"]
 
+        if needs_manual:
+            # Keyed by puuid and merged with (not overwritten by) any
+            # still-pending entries from an earlier bulk run, so starting
+            # a new file analysis before finishing a previous batch's Seed
+            # Rating follow-up never silently drops those pending rows.
+            existing = {e["puuid"]: e for e in st.session_state.get("bulk_needs_manual", [])}
+            for entry in needs_manual:
+                existing[entry["puuid"]] = entry
+            st.session_state["bulk_needs_manual"] = list(existing.values())
+
         if added:
             st.success(f"{len(added)}명 추가 완료: " + ", ".join(added))
         if needs_manual:
             st.warning(
                 f"{len(needs_manual)}명은 현재 시즌 언랭이라 운영자 판단(Seed Rating)이 필요합니다 - "
-                "'Riot ID로 자동 조회' 탭에서 개별 등록해주세요: " + ", ".join(needs_manual)
+                "아래 'Seed Rating 등록'에서 이어서 등록해주세요: "
+                + ", ".join(e["nickname"] for e in needs_manual)
             )
         if failed:
             st.error("등록 실패:\n" + "\n".join(f"- {name}: {reason}" for name, reason in failed))
+
+    _render_bulk_seed_rating(service, actor)
+
+
+def _render_bulk_seed_rating(service: PlayerService, actor: ServerMembership) -> None:
+    """Follow-up for players the bulk lookup above found are currently
+    unranked (no current-season rank to auto-derive Official Rating from).
+    Registering them still requires an operator's own Seed Rating judgment
+    per person (this app never lets a player self-report skill, and never
+    silently guesses it for a whole batch either) - but their puuid/OP.GG
+    peak hint/inferred position were already fetched during the bulk pass,
+    so finishing registration here needs no re-typing and no repeat Riot
+    API calls, unlike sending the operator to the single-player tab."""
+    pending = st.session_state.get("bulk_needs_manual")
+    if not pending:
+        return
+
+    st.divider()
+    st.subheader(f"Seed Rating 등록 - 언랭 참가자 {len(pending)}명")
+    st.caption(
+        "현재 시즌 랭크 정보가 없어 자동 등록할 수 없는 참가자입니다. OP.GG에 최고 티어 기록이 있다면 "
+        "참고용으로 함께 표시하니, 각자에 대해 Seed Tier를 직접 정해 등록하세요."
+    )
+
+    with st.form("bulk_seed_rating_form"):
+        seed_inputs: dict[str, tuple] = {}
+        for entry in pending:
+            puuid = entry["puuid"]
+            st.markdown(f"**{entry['nickname']}** ({entry['game_name']}#{entry['tag_line']})")
+            opgg_peak = entry.get("opgg_peak")
+            if opgg_peak is not None:
+                snapshot, season = opgg_peak
+                st.caption(f"OP.GG 최고 티어 참고: {_tier_display(snapshot.tier, snapshot.division, snapshot.lp)} ({season})")
+            else:
+                st.caption("OP.GG 최고 티어 정보를 찾지 못했습니다.")
+            scol1, scol2, scol3 = st.columns([2, 2, 1])
+            seed_tier = scol1.selectbox("Seed Tier", RANKED_TIERS, key=f"bulk_seed_tier_{puuid}")
+            seed_division = scol2.selectbox(
+                "Division", list(Division), index=list(Division).index(Division.III), key=f"bulk_seed_division_{puuid}"
+            )
+            skip = scol3.checkbox("건너뛰기", key=f"bulk_seed_skip_{puuid}")
+            seed_inputs[puuid] = (seed_tier, seed_division, skip)
+
+        submitted = st.form_submit_button("일괄 등록")
+
+    if not submitted:
+        return
+
+    seed_added: list[str] = []
+    seed_failed: list[tuple[str, str]] = []
+    remaining: list[dict] = []
+
+    for entry in pending:
+        seed_tier, seed_division, skip = seed_inputs[entry["puuid"]]
+        if skip:
+            remaining.append(entry)
+            continue
+
+        opgg_peak = entry.get("opgg_peak")
+        peak = opgg_peak[0] if opgg_peak else None
+        peak_achieved_season = opgg_peak[1] if opgg_peak else None
+        recommendation = entry.get("recommendation")
+        main_role = recommendation.main if recommendation else Position.MID
+        sub_role = recommendation.sub if recommendation else None
+
+        try:
+            player = service.register_player(
+                entry["nickname"],
+                entry["puuid"],
+                main_role,
+                None,
+                peak=peak,
+                actor_role=actor.role,
+                seed_tier=seed_tier,
+                seed_division=seed_division,
+                changed_by=actor.display_name,
+                sub_role=sub_role,
+                recommendation=recommendation,
+                peak_achieved_season=peak_achieved_season,
+            )
+        except PermissionDeniedError as exc:
+            seed_failed.append((entry["nickname"], f"권한이 없습니다: {exc}"))
+            remaining.append(entry)
+        except AppError as exc:
+            seed_failed.append((entry["nickname"], str(exc)))
+            remaining.append(entry)
+        except IntegrityError:
+            service.rollback()
+            seed_failed.append((entry["nickname"], "등록 실패 (이미 존재하는 참가자일 수 있음)"))
+            remaining.append(entry)
+        else:
+            seed_added.append(player.nickname)
+
+    if remaining:
+        st.session_state["bulk_needs_manual"] = remaining
+    else:
+        del st.session_state["bulk_needs_manual"]
+
+    if seed_added:
+        st.success(f"{len(seed_added)}명 Seed Rating으로 등록 완료: " + ", ".join(seed_added))
+    if seed_failed:
+        st.error("등록 실패:\n" + "\n".join(f"- {name}: {reason}" for name, reason in seed_failed))
+    st.rerun()
 
 
 def _render_edit_delete(service: PlayerService, players: list[Player], actor: ServerMembership) -> None:
