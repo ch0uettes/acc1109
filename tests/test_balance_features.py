@@ -105,7 +105,15 @@ def test_team_variance_feature_normalizes_via_logarithmic_curve():
     assert large - small < 1.0  # far less than a proportional 10x gap would imply
 
 
-def test_internal_rating_feature_applies_confidence_modifier():
+def test_internal_rating_feature_treats_equal_actual_ratings_as_equal_regardless_of_confidence():
+    """Regression test: the per-team aggregate used to be a plain mean of
+    rating*confidence (not renormalized by the confidence weights), so two
+    players with the IDENTICAL actual internal_rating but different
+    confidence used to score as if their teams had different strength -
+    purely because one player's data was newer/less trusted. A team's
+    confidence-weighted mean must reduce to the same rating when every
+    player on it actually has that rating, no matter how much their
+    confidence differs."""
     p1 = _player(100)
     p1.internal_rating = 1800.0
     p1.confidence = 0.30
@@ -115,13 +123,31 @@ def test_internal_rating_feature_applies_confidence_modifier():
     team_a = Team(index=0, players=[p1])
     team_b = Team(index=1, players=[p2])
 
-    # Confidence is NOT its own scored Feature - it's a modifier applied
-    # inside InternalRatingFeature: contribution = internal_rating *
-    # confidence (see the ChatGPT-suggested redesign this implements).
     assert confidence_weighted_internal_rating(p1) == pytest.approx(1800.0 * 0.30)
-    assert InternalRatingFeature().evaluate_raw([team_a, team_b]) == pytest.approx(
-        1800.0 * 1.00 - 1800.0 * 0.30
-    )
+    assert InternalRatingFeature().evaluate_raw([team_a, team_b]) == pytest.approx(0.0)
+
+
+def test_internal_rating_feature_weights_mixed_confidence_players_within_a_team():
+    """A team's aggregate must be a genuine confidence-weighted average
+    (sum(rating*confidence) / sum(confidence)), not just sum(rating*confidence)
+    left un-normalized - otherwise a team with more low-confidence players
+    would look weaker even when its players' actual skill is identical."""
+    veteran = _player(100)
+    veteran.internal_rating = 2000.0
+    veteran.confidence = 1.0
+    rookie = _player(100)
+    rookie.internal_rating = 1000.0
+    rookie.confidence = 0.25
+    team_a = Team(index=0, players=[veteran, rookie])
+    # weighted mean = (2000*1.0 + 1000*0.25) / (1.0 + 0.25) = 1800.0
+
+    p3, p4 = _player(100), _player(100)
+    p3.internal_rating = p4.internal_rating = 1500.0
+    p3.confidence = p4.confidence = 1.0
+    team_b = Team(index=1, players=[p3, p4])
+    # weighted mean = 1500.0
+
+    assert InternalRatingFeature().evaluate_raw([team_a, team_b]) == pytest.approx(300.0)
 
 
 def test_role_penalty_feature_sums_penalties():
@@ -142,6 +168,21 @@ def test_role_penalty_feature_normalizes_linearly():
     assert feature.normalize(0.0) == 0.0
     assert feature.normalize(500.0) == pytest.approx(0.5)
     assert feature.normalize(10_000.0) == 1.0  # clipped, doesn't exceed 1.0
+
+
+def test_lane_balance_feature_raises_when_no_position_overlaps_across_teams():
+    """Regression test: if teams' slots exist but happen to share no
+    single Position filled by 2+ teams (e.g. a partial/short-handed
+    roster upstream), the feature used to silently return 0.0 - the BEST
+    possible score - instead of surfacing that lane data isn't actually
+    comparable. That's the same class of bug the slots-is-None check right
+    above it already guards against, just one step further along."""
+    top_only = _player(2000)
+    jungle_only = _player(1800)
+    team_a = Team(index=0, players=[top_only], slots=[_slot(top_only, Position.TOP)])
+    team_b = Team(index=1, players=[jungle_only], slots=[_slot(jungle_only, Position.JUNGLE)])
+    with pytest.raises(ValueError):
+        LaneBalanceFeature().evaluate_raw([team_a, team_b])
 
 
 def test_lane_balance_feature_compares_same_lane_across_teams():
@@ -192,11 +233,26 @@ def test_lane_balance_feature_normalizes_linearly():
 # other team's own spread (that's MeanBalanceFeature's job). ---
 
 
+def test_outlier_penalty_feature_is_zero_for_exactly_two_teams():
+    """Regression test: for exactly 2 teams, "the single worst team's
+    deviation from the mean" is mathematically identical to (half of) the
+    gap MeanBalanceFeature already scores - there's only one degree of
+    freedom (the two averages' difference), so scoring it again here used
+    to silently double the effective weight of "team average gap" under a
+    second feature name. It must contribute no signal in the 2-team case,
+    only in a 3+-team split where it can actually isolate one bad team
+    from an otherwise tightly-clustered rest."""
+    team_a = Team(index=0, players=[_player(100), _player(100)])
+    team_b = Team(index=1, players=[_player(200), _player(200)])
+    assert OutlierPenaltyFeature().evaluate_raw([team_a, team_b]) == pytest.approx(0.0)
+
+
 def test_outlier_penalty_feature_computes_max_absolute_deviation():
     team_a = Team(index=0, players=[_player(100), _player(100)])  # avg final_rating 90
     team_b = Team(index=1, players=[_player(200), _player(200)])  # avg final_rating 180
-    # mean=135, deviations +-45 -> max absolute deviation is 45
-    assert OutlierPenaltyFeature().evaluate_raw([team_a, team_b]) == pytest.approx(45.0)
+    team_c = Team(index=2, players=[_player(160), _player(160)])  # avg final_rating 144
+    # mean=(90+180+144)/3=138, deviations -48/+42/+6 -> max absolute deviation is 48
+    assert OutlierPenaltyFeature().evaluate_raw([team_a, team_b, team_c]) == pytest.approx(48.0)
 
 
 def test_outlier_penalty_feature_zero_when_all_team_averages_equal():

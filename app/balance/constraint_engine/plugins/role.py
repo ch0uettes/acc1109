@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
-from app.balance.constraint_engine.base import LeafHardConstraint
+from app.balance.constraint_engine.base import LeafHardConstraint, PartialHardConstraint
 from app.balance.constraint_engine.context import ConstraintContext
 from app.balance.constraint_engine.result import ConstraintPipeline, ConstraintResult, ConstraintStatus
 
@@ -50,6 +50,56 @@ class FixedRoleConstraint(LeafHardConstraint):
                             {"player_id": slot.player.id, "assigned_position": slot.position.value}
                         ),
                     )
+        return ConstraintResult(
+            constraint_name=self.name, pipeline=self.pipeline, tier=self.tier,
+            status=ConstraintStatus.PASS, priority=self.default_priority,
+        )
+
+
+class FixedRoleCollisionConstraint(PartialHardConstraint):
+    """Prunes a branch the moment it would seat two hard-forced ('이번
+    경기 고정') players onto the same roster for the same forced
+    Position - without this, FixedRoleConstraint (the LEAF_HARD sibling
+    above) can only reject a candidate after a *complete* team is built,
+    so a colliding pair (e.g. two players both forced to JUNGLE on the
+    same match) makes the DFS spend its entire node/time budget
+    exploring leaves that were always doomed, then silently fall back to
+    the warm-start result - which is just as likely to violate the same
+    override, returned with no indication the operator's pin wasn't
+    honored.
+
+    Monotonic by construction: once two forced-same-position players
+    share a roster, no further placement can undo that, so it's safe to
+    prune here rather than waiting for a leaf."""
+
+    name = "fixed_role_collision"
+    pipeline = ConstraintPipeline.ROLE
+    default_priority = 85
+    description = "고정 포지션이 겹치는 두 참가자가 같은 팀에 배치되지 않도록 미리 차단합니다"
+
+    def evaluate(self, context: ConstraintContext) -> ConstraintResult:
+        candidate = context.candidate_player
+        if candidate is None or context.team_index is None or candidate.id not in context.override_player_ids:
+            return ConstraintResult(
+                constraint_name=self.name, pipeline=self.pipeline, tier=self.tier,
+                status=ConstraintStatus.PASS, priority=self.default_priority,
+            )
+        candidate_position = context.role_preferences[candidate.id].main
+        roster = context.rosters[context.team_index] if context.team_index < len(context.rosters) else ()
+        for teammate in roster:
+            if (
+                teammate.id in context.override_player_ids
+                and context.role_preferences[teammate.id].main == candidate_position
+            ):
+                return ConstraintResult(
+                    constraint_name=self.name, pipeline=self.pipeline, tier=self.tier,
+                    status=ConstraintStatus.FAIL, priority=self.default_priority,
+                    reason=(
+                        f"{candidate.nickname}과(와) {teammate.nickname}이(가) 같은 팀에서 "
+                        f"동일한 고정 포지션({candidate_position.value})을 두고 충돌합니다"
+                    ),
+                    prune=True,
+                )
         return ConstraintResult(
             constraint_name=self.name, pipeline=self.pipeline, tier=self.tier,
             status=ConstraintStatus.PASS, priority=self.default_priority,

@@ -39,8 +39,8 @@ class ConstraintContext:
     # match_override (see PlayerSignup), NOT from their stored profile
     # main/sub role - RolePreferenceManager.resolve() erases that
     # distinction once it produces role_preferences, so it has to be
-    # threaded separately for FixedRoleConstraint to know which players
+    # threaded separately for FixedRoleConstraint (leaf) and
+    # FixedRoleCollisionConstraint (partial) to know which players
     # actually need their position enforced as a hard requirement rather
-    # than every player's ordinary preferred lane. Empty for partial
-    # contexts (no PartialHardConstraint plugin needs this yet).
+    # than every player's ordinary preferred lane.
     override_player_ids: frozenset[int] = frozenset()

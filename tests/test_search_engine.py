@@ -280,3 +280,35 @@ def test_warm_start_fallback_records_hard_fail_count_once_not_twice():
     assert len(results) == 1  # the warm-start fallback, nothing else qualified
     genuine_evaluation_count = engine.last_nodes_expanded + 1  # +1 for the warm start
     assert engine.last_constraint_statistics.hard_fail_count == genuine_evaluation_count
+
+
+def test_partial_hard_pruning_lets_the_search_actually_satisfy_multiple_fixed_roles():
+    """Regression test: before FixedRoleCollisionConstraint existed, the
+    DFS had no way to know mid-search that seating two hard-forced players
+    into the same forced position on one roster is fatal - it only found
+    out at the leaf, after a complete team was already built. With several
+    forced players in a larger lobby, that meant the search could burn its
+    entire default node budget on doomed leaves and silently fall back to
+    a warm-start result that violates the operator's pin just as badly
+    (see the class docstring: the warm start guarantees *a* valid result,
+    never that every Hard Constraint is met under a budget). Pruning a
+    colliding branch before recursing into it means the budget is spent
+    only on leaves that can actually satisfy every forced player - with 6
+    teams and only 4 forced players here, that's always possible."""
+    players = _players(30)
+    preferences = _preferences(players)
+    forced_ids = frozenset(p.id for p in players[:4])
+    for pid in forced_ids:
+        preferences[pid] = RolePreference(main=Position.JUNGLE)
+
+    engine = BacktrackingSearchEngine()  # production defaults: max_nodes=20_000, time_budget=5.0
+    results = engine.search_top_k(players, preferences, k=1, override_player_ids=forced_ids)
+
+    assert engine.last_constraint_statistics.pruned_branch_count > 0
+    best = results[0]
+    forced_slots = [
+        slot for team in best.teams for slot in (team.slots or []) if slot.player.id in forced_ids
+    ]
+    assert len(forced_slots) == len(forced_ids)
+    assert all(slot.position == Position.JUNGLE for slot in forced_slots)
+    assert all(slot.role_source == "main" for slot in forced_slots)

@@ -35,29 +35,41 @@ MASTER_STAGE_STEP = 300
 # Official Rating's current-tier-vs-peak-tier structure: a current tier at
 # or near Peak Tier is trusted as-is (an in-form player's current rank IS
 # their skill read, full stop). Only once the gap reaches
-# PEAK_BLEND_GAP_THRESHOLD does Peak Tier get pulled in - the player may be
-# rusty/returning rather than genuinely weaker now, so a still-recent Peak
-# Tier deserves a real say rather than being ignored entirely.
+# PEAK_BLEND_GAP_THRESHOLD does Peak Tier start getting pulled in - the
+# player may be rusty/returning rather than genuinely weaker now, so a
+# still-recent Peak Tier deserves a real say rather than being ignored
+# entirely. The pull-in ramps linearly over PEAK_BLEND_RAMP_WIDTH more
+# points of gap (reaching the full PEAK_BLEND_PEAK_WEIGHT only once the gap
+# clears threshold+ramp) instead of jumping straight to full weight the
+# instant the gap crosses the threshold - a hard jump there would mean one
+# more LP of decay at exactly the wrong moment could swing Official Rating
+# by tens of points, which is the same cliff-edge problem this project
+# otherwise avoids by using smooth Logistic curves everywhere else (see
+# app/balance/features/scaling.py's LogisticNormalizer).
 PEAK_BLEND_GAP_THRESHOLD = 200.0
+PEAK_BLEND_RAMP_WIDTH = 200.0
 PEAK_BLEND_CURRENT_WEIGHT = 0.65
 PEAK_BLEND_PEAK_WEIGHT = 0.35
 
 
 def blend_current_and_peak(current_score: float, peak_score: Optional[float]) -> float:
-    """current_score alone when there's no Peak Tier reading, or when
-    current is at/above Peak Tier, or the gap is under
-    PEAK_BLEND_GAP_THRESHOLD (peak-tier score minus current-tier score -
-    signed, not absolute: a player currently *exceeding* their recorded
-    peak should never be dragged down by a stale/lower peak entry, only a
-    player sitting well *below* their peak gets the blend). Once the gap
-    reaches the threshold, PEAK_BLEND_CURRENT_WEIGHT/PEAK_BLEND_PEAK_WEIGHT
-    weighted sum of the two scores instead."""
+    """current_score alone when there's no Peak Tier reading, when current
+    is at/above Peak Tier, or when the gap (peak-tier score minus
+    current-tier score - signed, not absolute: a player currently
+    *exceeding* their recorded peak should never be dragged down by a
+    stale/lower peak entry, only a player sitting below their peak gets the
+    blend) hasn't yet reached PEAK_BLEND_GAP_THRESHOLD. Past the threshold,
+    Peak Tier's weight ramps linearly from 0 up to PEAK_BLEND_PEAK_WEIGHT
+    over the next PEAK_BLEND_RAMP_WIDTH points of gap, so the transition is
+    continuous - the score just past the threshold is nearly identical to
+    the score just before it, not a sudden jump to a 65/35 split."""
     if peak_score is None:
         return current_score
     gap = peak_score - current_score
-    if gap < PEAK_BLEND_GAP_THRESHOLD:
+    if gap <= PEAK_BLEND_GAP_THRESHOLD:
         return current_score
-    return PEAK_BLEND_CURRENT_WEIGHT * current_score + PEAK_BLEND_PEAK_WEIGHT * peak_score
+    peak_weight = PEAK_BLEND_PEAK_WEIGHT * min(1.0, (gap - PEAK_BLEND_GAP_THRESHOLD) / PEAK_BLEND_RAMP_WIDTH)
+    return (1.0 - peak_weight) * current_score + peak_weight * peak_score
 
 
 class OfficialRatingCalculator(RatingCalculator):

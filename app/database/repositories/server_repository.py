@@ -75,10 +75,16 @@ class ServerRepository(BaseRepository[ServerEntity]):
     def list(self) -> list[Server]:
         return [_to_domain(e) for e in self._list_entities()]
 
+    def _require_entity(self, server_id: int) -> ServerEntity:
+        entity = self._get_entity(server_id)
+        if entity is None:
+            raise ValueError(f"Server {server_id} not found")
+        return entity
+
     def update_balance_config(
         self, server_id: int, normalization: NormalizationConfig, hard_constraint: HardConstraintConfig
     ) -> Server:
-        entity = self._get_entity(server_id)
+        entity = self._require_entity(server_id)
         entity.normalization_config = dataclasses.asdict(normalization)
         entity.hard_constraint_config = dataclasses.asdict(hard_constraint)
         self.session.commit()
@@ -86,14 +92,14 @@ class ServerRepository(BaseRepository[ServerEntity]):
         return _to_domain(entity)
 
     def update_season_label(self, server_id: int, label: str) -> Server:
-        entity = self._get_entity(server_id)
+        entity = self._require_entity(server_id)
         entity.current_season_label = label
         self.session.commit()
         self.session.refresh(entity)
         return _to_domain(entity)
 
     def update_constraint_priorities(self, server_id: int, priorities: dict[str, int]) -> Server:
-        entity = self._get_entity(server_id)
+        entity = self._require_entity(server_id)
         entity.constraint_priorities = priorities
         self.session.commit()
         self.session.refresh(entity)

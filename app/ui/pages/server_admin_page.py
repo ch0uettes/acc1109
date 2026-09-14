@@ -252,22 +252,36 @@ def _render_balance_config(service: ServerService, server_id: int, actor: Server
             "기본은 전부 비활성 - 체크한 항목만 해당 값을 초과하는 후보를 팀 구성 결과에서 제외합니다. "
             "과도하게 사용하면 경계값 근처에서 결과가 불안정해질 수 있어 권장하지 않습니다."
         )
+        # Keyed by server_id + the value currently on record (not just a
+        # fixed literal) - a widget's explicit `key=` wins over a freshly
+        # computed `value=` on every later rerun, so a fixed key would keep
+        # showing a stale number after "기본값으로 초기화" resets the DB
+        # (server.hard_constraint_config changes but the widget doesn't),
+        # and would also leak one server's typed-but-unsaved value into
+        # another server's form after switching servers in the sidebar.
+        # Folding the actual stored value into the key means a real change
+        # to the underlying config (reset, save, or a different server)
+        # naturally gets a fresh widget instead of reusing a stale one.
+        key_suffix = f"_{server_id}"
         hcol1, hcol2 = st.columns(2)
         with hcol1:
             use_mean_balance_max = st.checkbox(
                 "전체 평균 균형 상한 사용", value=hard.mean_balance_diff_max is not None
             )
             mean_balance_diff_max = st.number_input(
-                "상한 값", value=hard.mean_balance_diff_max or 1000.0, min_value=0.0, step=50.0, key="mean_balance_diff_max"
+                "상한 값", value=hard.mean_balance_diff_max or 1000.0, min_value=0.0, step=50.0,
+                key=f"mean_balance_diff_max{key_suffix}_{hard.mean_balance_diff_max}",
             )
             use_lane_max = st.checkbox("라인별 격차 상한 사용", value=hard.lane_diff_max is not None)
             lane_diff_max = st.number_input(
-                "상한 값", value=hard.lane_diff_max or 5000.0, min_value=0.0, step=100.0, key="lane_diff_max"
+                "상한 값", value=hard.lane_diff_max or 5000.0, min_value=0.0, step=100.0,
+                key=f"lane_diff_max{key_suffix}_{hard.lane_diff_max}",
             )
         with hcol2:
             use_variance_max = st.checkbox("팀 내부 분산 상한 사용", value=hard.team_variance_max is not None)
             team_variance_max = st.number_input(
-                "상한 값", value=hard.team_variance_max or 200_000.0, min_value=0.0, step=5000.0, key="team_variance_max"
+                "상한 값", value=hard.team_variance_max or 200_000.0, min_value=0.0, step=5000.0,
+                key=f"team_variance_max{key_suffix}_{hard.team_variance_max}",
             )
             use_main_ratio = st.checkbox("Main 포지션 최소 비율 사용", value=hard.minimum_main_role_ratio is not None)
             minimum_main_ratio = st.number_input(
@@ -276,7 +290,7 @@ def _render_balance_config(service: ServerService, server_id: int, actor: Server
                 min_value=0.0,
                 max_value=1.0,
                 step=0.05,
-                key="minimum_main_ratio",
+                key=f"minimum_main_ratio{key_suffix}_{hard.minimum_main_role_ratio}",
             )
 
         save_col, reset_col = st.columns(2)
@@ -356,12 +370,16 @@ def _render_constraint_priorities(service: ServerService, server_id: int, actor:
                     f"{CONSTRAINT_PIPELINE_LABEL[constraint_cls.pipeline]} · "
                     f"기본 우선순위 {constraint_cls.default_priority}"
                 )
+            # Same server_id+value keying as _render_balance_config above -
+            # otherwise "기본값으로 초기화" or switching servers leaves
+            # this showing a stale priority instead of the one just reset/
+            # loaded.
             new_priorities[name] = int(
                 col2.number_input(
                     "우선순위",
                     value=int(current_priority),
                     step=5,
-                    key=f"constraint_priority_{name}",
+                    key=f"constraint_priority_{name}_{server_id}_{current_priority}",
                     label_visibility="collapsed",
                 )
             )

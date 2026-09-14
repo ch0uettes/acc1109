@@ -82,6 +82,7 @@ class ConstraintContextFactory:
         strategy: IBalanceStrategy,
         search_policy: SearchPolicy,
         constraint_priorities: Optional[dict[str, int]] = None,
+        override_player_ids: frozenset = frozenset(),
     ) -> ConstraintContext:
         cache: _PlayerCopyCache = {}
         return ConstraintContext(
@@ -94,6 +95,7 @@ class ConstraintContextFactory:
             strategy=strategy,
             search_policy=search_policy,
             constraint_priorities=MappingProxyType(dict(constraint_priorities or {})),
+            override_player_ids=override_player_ids,
         )
 
     def create_leaf_context(

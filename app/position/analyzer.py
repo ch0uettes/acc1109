@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from typing import Optional
 
+import requests
+
 from app.position.schemas import RoleRecommendation
 from app.riot.client import RiotAPIClient
 
@@ -52,13 +54,43 @@ class RiotHistoryPositionAnalyzer(PositionAnalyzer):
     def recommend(self, puuid: str) -> Optional[RoleRecommendation]:
         collected = []
         start = 0
+        consecutive_empty_batches = 0
 
-        while True:
-            batch = self.riot_client.get_match_history(puuid, count=self.window_step, start=start)
-            if not batch:
+        # Bounds how far back the search probes (start offset), not how
+        # many entries end up in `collected` - tolerating empty batches
+        # below means the loop could otherwise run indefinitely if empty
+        # and non-empty batches kept alternating without ever hitting 2
+        # consecutive empties.
+        while start < self.max_matches:
+            try:
+                batch = self.riot_client.get_match_history(puuid, count=self.window_step, start=start)
+            except requests.exceptions.RequestException:
+                # A single failed request (e.g. a 429 that exhausted its
+                # retries, or a transient 5xx) late in a multi-batch scan
+                # used to discard every batch already collected, turning
+                # one flaky request into a total loss of an otherwise-good
+                # recommendation. Report on whatever was gathered so far
+                # instead of losing it - PlayerService.infer_position
+                # already treats a *first-batch* failure as "no
+                # recommendation" via its own except clause, so this only
+                # changes behavior once there's real partial progress.
                 break
-            collected.extend(batch)
             start += self.window_step
+            if not batch:
+                # get_match_history() can legitimately return [] for a
+                # non-empty id batch if every participant lookup in that
+                # window missed (see its own docstring) - that's not the
+                # same as "no more games exist". Only treat two consecutive
+                # empty batches as genuine end-of-history, so one
+                # data-inconsistency window doesn't cut the widening
+                # search short while later, perfectly fetchable games
+                # still exist.
+                consecutive_empty_batches += 1
+                if consecutive_empty_batches >= 2:
+                    break
+                continue
+            consecutive_empty_batches = 0
+            collected.extend(batch)
 
             counts = Counter(e.position for e in collected)
             _, top_count = counts.most_common(1)[0]

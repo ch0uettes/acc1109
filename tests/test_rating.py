@@ -63,9 +63,25 @@ def test_blend_uses_current_alone_when_current_is_at_or_above_peak():
     assert blend_current_and_peak(1800, 1800) == 1800  # exactly at peak
 
 
-def test_blend_weights_current_and_peak_once_gap_reaches_threshold():
-    assert blend_current_and_peak(1800, 2000) == pytest.approx(0.65 * 1800 + 0.35 * 2000)  # gap == 200 exactly
-    assert blend_current_and_peak(1800, 2400) == pytest.approx(0.65 * 1800 + 0.35 * 2400)  # gap == 600
+def test_blend_ramps_smoothly_past_the_threshold_instead_of_jumping():
+    """Regression test: the blend used to jump straight from 0% to 35%
+    peak weight the instant gap crossed 200, so losing a single LP right at
+    the boundary could swing Official Rating by dozens of points. It now
+    ramps linearly over the next 200 points of gap instead, so a gap just
+    past the threshold looks almost identical to one just before it."""
+    just_under = blend_current_and_peak(1800, 1800 + 200)  # gap == 200 exactly -> still current alone
+    just_over = blend_current_and_peak(1800, 1800 + 201)  # gap == 201 -> barely any peak weight yet
+    assert just_under == 1800
+    assert just_over == pytest.approx(1800, abs=0.5)
+
+    # gap == 300 sits halfway through the 200..400 ramp -> half of the full 35% peak weight
+    halfway = blend_current_and_peak(1800, 1800 + 300)
+    assert halfway == pytest.approx(0.825 * 1800 + 0.175 * (1800 + 300))
+
+
+def test_blend_reaches_full_weight_once_gap_clears_the_ramp():
+    assert blend_current_and_peak(1800, 2000 + 200) == pytest.approx(0.65 * 1800 + 0.35 * (2000 + 200))  # gap == 400
+    assert blend_current_and_peak(1800, 2400) == pytest.approx(0.65 * 1800 + 0.35 * 2400)  # gap == 600, past the ramp
 
 
 def test_current_tier_priority_strategy_matches_blend_current_and_peak():

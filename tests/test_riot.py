@@ -63,6 +63,26 @@ def test_get_falls_back_to_a_default_wait_when_retry_after_is_missing_or_invalid
     mock_sleep.assert_called_once_with(LiveRiotAPIClient.RATE_LIMIT_DEFAULT_WAIT_SECONDS)
 
 
+def test_get_account_by_riot_id_percent_encodes_the_name_and_tag():
+    """Regression test: game_name/tag_line used to be dropped straight into
+    the URL path unescaped. A space in the name (extremely common - e.g.
+    'Hide on bush') or a Korean custom tag (this app explicitly supports
+    Hangul tags in bulk OCR registration) is not a valid raw URL path
+    segment, so an unescaped lookup risks silently 404ing as "player not
+    found" for an account that actually exists. Also strips incidental
+    whitespace from copy-pasting "Name #KR1"."""
+    client = LiveRiotAPIClient(api_key="fake-key")
+    response = _response(200, payload={"puuid": "p1", "gameName": "Hide on bush", "tagLine": "가나다"})
+
+    with patch("app.riot.client.requests.get", return_value=response) as mock_get:
+        client.get_account_by_riot_id(" Hide on bush ", " 가나다 ")
+
+    called_url = mock_get.call_args[0][0]
+    assert "Hide on bush" not in called_url  # unescaped space/text must not appear raw
+    assert "Hide%20on%20bush" in called_url
+    assert "%EA%B0%80%EB%82%98%EB%8B%A4" in called_url  # percent-encoded UTF-8 for 가나다
+
+
 def test_convert_normal_tier_keeps_division_and_lp():
     tier, division, lp = _convert_riot_rank("GOLD", "II", 45)
     assert tier == Tier.GOLD

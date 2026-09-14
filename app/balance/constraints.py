@@ -39,18 +39,36 @@ class HardConstraintLayer:
 
         cfg = self.config
         if cfg.mean_balance_diff_max is not None:
-            if raw_breakdown.get("mean_balance", 0.0) > cfg.mean_balance_diff_max:
+            if self._raw(raw_breakdown, "mean_balance", cfg) > cfg.mean_balance_diff_max:
                 return False
         if cfg.lane_diff_max is not None:
-            if raw_breakdown.get("lane_balance", 0.0) > cfg.lane_diff_max:
+            if self._raw(raw_breakdown, "lane_balance", cfg) > cfg.lane_diff_max:
                 return False
         if cfg.team_variance_max is not None:
-            if raw_breakdown.get("team_variance", 0.0) > cfg.team_variance_max:
+            if self._raw(raw_breakdown, "team_variance", cfg) > cfg.team_variance_max:
                 return False
         if cfg.minimum_main_role_ratio is not None:
             if self._main_role_ratio(teams) < cfg.minimum_main_role_ratio:
                 return False
         return True
+
+    def _raw(self, raw_breakdown: dict[str, float], name: str, cfg: HardConstraintConfig) -> float:
+        """raw_breakdown only ever contains keys for Features the active
+        Strategy actually enabled (see BalanceEvaluator.evaluate_raw) - a
+        Strategy that disables one of these three Features while its
+        HardConstraintConfig threshold for that same metric stays set would
+        otherwise silently treat the missing value as 0.0, i.e. always
+        "compliant," no matter how imbalanced the real (uncomputed) metric
+        would have been. Failing loudly here instead of guessing 0.0 is
+        cheap insurance since fixing the config mismatch (disable the
+        threshold, or re-enable the Feature) is the operator's call, not
+        something this layer should paper over."""
+        if name not in raw_breakdown:
+            raise ValueError(
+                f"HardConstraintConfig has a threshold set for '{name}', but the active Strategy has "
+                f"that Feature disabled - there's no raw value to check it against."
+            )
+        return raw_breakdown[name]
 
     def _is_structurally_valid(self, teams: list[Team]) -> bool:
         for team in teams:

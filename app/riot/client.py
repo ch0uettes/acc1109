@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from abc import ABC, abstractmethod
 from typing import Optional
+from urllib.parse import quote
 
 import requests
 
@@ -137,9 +138,16 @@ class LiveRiotAPIClient(RiotAPIClient):
         raise AssertionError("unreachable")  # loop always returns or raises on its final iteration
 
     def get_account_by_riot_id(self, game_name: str, tag_line: str) -> RiotAccount:
+        # game_name/tag_line are raw operator input dropped straight into a
+        # URL path - a Riot ID with a space in the name (extremely common:
+        # "Hide on bush#KR1") or a Korean custom tag (see the Hangul tag
+        # support added to the OCR roster parser) is neither valid ASCII
+        # nor a valid raw URL path segment unescaped. Percent-encoding here
+        # is what makes those lookups actually reach the right account
+        # instead of silently 404ing as "player not found".
         url = (
             f"https://{self.region}.api.riotgames.com"
-            f"/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}"
+            f"/riot/account/v1/accounts/by-riot-id/{quote(game_name.strip(), safe='')}/{quote(tag_line.strip(), safe='')}"
         )
         data = self._get(url)
         return RiotAccount(puuid=data["puuid"], game_name=data["gameName"], tag_line=data["tagLine"])
@@ -192,7 +200,18 @@ class LiveRiotAPIClient(RiotAPIClient):
                 # not take out every other match in the batch.
                 time.sleep(MATCH_DETAIL_REQUEST_DELAY_SECONDS)
                 continue
-            position = _TEAM_POSITION_MAP.get(participant.get("teamPosition", ""), Position.MID)
+            position = _TEAM_POSITION_MAP.get(participant.get("teamPosition", ""))
+            if position is None:
+                # Match-V5 can legitimately report an empty/unrecognized
+                # teamPosition (an early remake, or an occasional backend
+                # role-inference miss) even for an otherwise-valid ranked
+                # game. Defaulting that to MID used to silently count a
+                # game the player may never have actually played mid
+                # towards their Main/Sub ratio - skipping it (like the
+                # missing-participant case above) keeps the sample honest
+                # instead of quietly polluting it.
+                time.sleep(MATCH_DETAIL_REQUEST_DELAY_SECONDS)
+                continue
             entries.append(
                 MatchHistoryEntry(
                     match_id=match_id,

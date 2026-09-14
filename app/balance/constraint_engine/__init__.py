@@ -18,7 +18,7 @@ from app.balance.constraint_engine.context_factory import (
     ConstraintContextFactory,
 )
 from app.balance.constraint_engine.executor import ConstraintExecutor
-from app.balance.constraint_engine.plugins.role import FixedRoleConstraint
+from app.balance.constraint_engine.plugins.role import FixedRoleCollisionConstraint, FixedRoleConstraint
 from app.balance.constraint_engine.plugins.structural import (
     RequiredRoleConstraint,
     TeamSizeConstraint,
@@ -32,13 +32,16 @@ from app.balance.constraint_engine.result import (
     ConstraintTier,
 )
 
-# Only these 4 plugins ship active by default this pass - the other 3
+# Only these 5 plugins ship active by default this pass - the other 3
 # Constraint categories (Relationship/Preference/Search Guidance
 # pipelines, and the Soft/Preference tiers entirely) stay empty until a
 # concrete rule (Duo, Tournament, ...) actually needs them. See the
 # Constraint Engine plan's "what concretely ships vs. architecture-only"
 # section for why.
-for _plugin_cls in (TeamSizeConstraint, UniquePlayerConstraint, RequiredRoleConstraint, FixedRoleConstraint):
+for _plugin_cls in (
+    TeamSizeConstraint, UniquePlayerConstraint, RequiredRoleConstraint, FixedRoleConstraint,
+    FixedRoleCollisionConstraint,
+):
     DEFAULT_CONSTRAINT_REGISTRY.register(_plugin_cls)
 
 __all__ = [
@@ -64,4 +67,5 @@ __all__ = [
     "UniquePlayerConstraint",
     "RequiredRoleConstraint",
     "FixedRoleConstraint",
+    "FixedRoleCollisionConstraint",
 ]

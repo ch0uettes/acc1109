@@ -39,6 +39,22 @@ class OutlierPenaltyFeature(IBalanceFeature):
         )
 
     def evaluate_raw(self, teams: list[Team]) -> float:
+        if len(teams) < 3:
+            # With exactly 2 teams there's only one degree of freedom (the
+            # gap between the two averages), so "the single worst team's
+            # deviation from the mean" is mathematically identical to (a
+            # fixed multiple of) MeanBalanceFeature's stdev-of-means - no
+            # amount of reformulating the reference point changes that for
+            # a pair of numbers. Scoring it anyway would silently double
+            # the effective weight of "team average gap" under two
+            # different feature names. It only starts measuring something
+            # MeanBalanceFeature can't see once there are 3+ teams (e.g. a
+            # multi-lobby event) to tell "one bad team" apart from
+            # "everyone moderately spread out." Returning a constant here
+            # doesn't affect ranking within a single search (every
+            # candidate in a 2-team search gets the same constant), only
+            # zeroes out the otherwise-redundant weight.
+            return 0.0
         means = [team.average_rating for team in teams]
         global_mean = statistics.fmean(means)
         return max(abs(mean - global_mean) for mean in means)

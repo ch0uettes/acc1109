@@ -93,3 +93,22 @@ def test_skips_malformed_rows_without_crashing():
     assert entries[0].season == "S2024"
     assert entries[0].tier == Tier.GOLD
     assert entries[0].division == Division.II
+
+
+def test_skips_a_row_with_an_empty_tier_cell_without_losing_other_rows():
+    """Regression test: an icon-only tier badge with no text node makes
+    text.strip().split() return [] , and parts[0] used to raise an
+    uncaught IndexError - which propagated out of the whole function and
+    discarded every row already parsed, not just the malformed one."""
+    html = """
+    <table>
+    <thead><tr><th>Season</th><th>Tier</th><th>LP</th></tr></thead>
+    <tbody>
+    <tr><td><strong>S2025</strong></td><td><div><span></span></div></td><td>10</td></tr>
+    <tr><td><strong>S2024</strong></td><td><div><span>gold 2</span></div></td><td>50</td></tr>
+    </tbody>
+    </table>
+    """
+    entries = parse_season_history_html(html)
+    assert len(entries) == 1  # the empty-tier row was skipped, not the whole page
+    assert entries[0].season == "S2024"

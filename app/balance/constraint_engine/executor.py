@@ -73,12 +73,14 @@ class ConstraintExecutor:
         player: Player,
         player_profiles: list[Player],
         role_preferences: dict[int, RolePreference],
+        override_player_ids: frozenset = frozenset(),
     ) -> list[ConstraintResult]:
         if not self._active_partial_hard:
             return []
         context = self.context_factory.create_partial_context(
             rosters, team_index, player, player_profiles, role_preferences,
             self.strategy, self.search_policy, self._effective_priorities,
+            override_player_ids=override_player_ids,
         )
         results: list[ConstraintResult] = []
         for constraint in self._active_partial_hard:

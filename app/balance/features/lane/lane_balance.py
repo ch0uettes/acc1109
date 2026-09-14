@@ -52,7 +52,19 @@ class LaneBalanceFeature(IBalanceFeature):
                 gap = max(ratings) - min(ratings)
                 squared_gaps.append(gap * gap)
         if not squared_gaps:
-            return 0.0
+            if len(teams) < 2:
+                # Nothing to compare a lane gap *across* with only one (or
+                # zero) teams - not a data problem, just a degenerate input
+                # where "lane balance" isn't a meaningful question yet.
+                return 0.0
+            # 2+ teams but still no single Position filled by 2+ of them -
+            # e.g. a partial/short-handed roster upstream. That IS a real
+            # data problem, not "lanes happen to be perfectly balanced":
+            # returning 0.0 (the best possible score) would silently
+            # reward the exact case this Feature exists to catch.
+            raise ValueError(
+                "LaneBalanceFeature found no Position filled by 2+ teams - team slots look incomplete"
+            )
         return math.sqrt(sum(squared_gaps) / len(squared_gaps))
 
     def normalize(self, raw: float) -> float:

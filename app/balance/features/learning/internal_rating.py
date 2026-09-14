@@ -17,12 +17,17 @@ class InternalRatingFeature(IBalanceFeature):
     Strategy weight "how this community's own games rate someone"
     independently of their Riot-verified rank.
 
-    Each player's contribution is confidence_weighted_internal_rating()
-    (internal_rating * confidence), not raw internal_rating - a brand-new
-    player's barely-tested Internal Rating counts for less than a
-    veteran's well-established one. This is a Confidence *modifier*, not
-    an independent ConfidenceFeature scoring its own points - see
-    app.balance.features.learning.modifiers for why.
+    Each team's mean is a *confidence-weighted* average of internal_rating
+    (sum(rating*confidence) / sum(confidence)), not a plain mean of
+    confidence_weighted_internal_rating() values - a brand-new player's
+    barely-tested Internal Rating should count for less than a veteran's
+    well-established one, but a plain mean of rating*confidence instead
+    drags the whole team's number toward zero in proportion to how many
+    low-confidence players it has, even when their actual rating is
+    identical to a high-confidence teammate's. That conflates "how much to
+    trust this data" with "how strong this team is," which is exactly the
+    thing confidence_weighted_internal_rating()'s modifier role is
+    supposed to avoid - see app.balance.features.learning.modifiers.
 
     Normalized via the same Logistic shape as AverageRatingFeature, since
     it shares the same linear rating-point unit."""
@@ -40,11 +45,15 @@ class InternalRatingFeature(IBalanceFeature):
         )
 
     def evaluate_raw(self, teams: list[Team]) -> float:
-        means = [
-            statistics.fmean(confidence_weighted_internal_rating(p) for p in team.players)
-            for team in teams
-        ]
+        means = [self._confidence_weighted_team_mean(team) for team in teams]
         return max(means) - min(means)
+
+    @staticmethod
+    def _confidence_weighted_team_mean(team: Team) -> float:
+        total_confidence = sum(p.confidence for p in team.players)
+        if total_confidence <= 0:
+            return statistics.fmean(p.internal_rating for p in team.players)
+        return sum(confidence_weighted_internal_rating(p) for p in team.players) / total_confidence
 
     def normalize(self, raw: float) -> float:
         return self._normalizer(raw)

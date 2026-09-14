@@ -174,3 +174,43 @@ def test_voting_for_a_nonexistent_match_is_rejected(session):
 
     with pytest.raises(MatchNotFoundError):
         vote_service.cast_vote(match_id=999, voter_player_id=1, voted_player_id=2, actor_role=Role.PLAYER)
+
+
+def test_a_participant_cannot_vote_for_themselves(session):
+    match, participant_ids = _make_match(session)
+    vote_service = VoteService(session, server_id=1)
+
+    with pytest.raises(InvalidVoteError):
+        vote_service.cast_vote(
+            match_id=match.id,
+            voter_player_id=participant_ids[0],
+            voted_player_id=participant_ids[0],
+            actor_role=Role.PLAYER,
+        )
+
+
+def test_voting_is_rejected_once_user_mvp_is_already_confirmed(session):
+    """Regression test: list_pending_votes() only filters closed matches
+    out of the dropdown at page load - a form left open in another tab, or
+    a request that arrives right after an admin confirms User MVP, could
+    otherwise still insert a vote against a round that's already been
+    tallied and announced."""
+    match, participant_ids = _make_match(session)
+    vote_service = VoteService(session, server_id=1)
+    match_service = MatchService(session, server_id=1)
+
+    vote_service.cast_vote(
+        match_id=match.id,
+        voter_player_id=participant_ids[0],
+        voted_player_id=participant_ids[1],
+        actor_role=Role.PLAYER,
+    )
+    match_service.set_user_mvp(match.id, participant_ids[1], actor_role=Role.SERVER_ADMIN)
+
+    with pytest.raises(InvalidVoteError):
+        vote_service.cast_vote(
+            match_id=match.id,
+            voter_player_id=participant_ids[2],
+            voted_player_id=participant_ids[1],
+            actor_role=Role.PLAYER,
+        )

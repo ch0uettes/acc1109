@@ -265,7 +265,10 @@ class BacktrackingSearchEngine(TeamSearchEngine):
 
         deadline = time.monotonic() + self.time_budget_seconds
         rosters: list[list[Player]] = [[] for _ in range(num_teams)]
-        self._dfs(ordered, 0, rosters, num_teams, preferences, evaluate_and_offer, deadline, forced_positions)
+        self._dfs(
+            ordered, 0, rosters, num_teams, preferences, evaluate_and_offer, deadline, forced_positions,
+            override_player_ids,
+        )
 
         results = self.search_policy.order_team_candidates(top.results())
         if not results:
@@ -345,6 +348,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
         on_leaf,
         deadline: float,
         forced_positions: dict[int, Position] | None = None,
+        override_player_ids: frozenset = frozenset(),
     ) -> None:
         if self._nodes_expanded >= self.max_nodes or time.monotonic() > deadline:
             return
@@ -362,17 +366,17 @@ class BacktrackingSearchEngine(TeamSearchEngine):
 
         # Partial-Hard pruning (Constraint Engine) - drops any branch a
         # monotonic PartialHardConstraint rejects before recursing into it
-        # at all. No-op with the default registry (zero concrete
-        # PartialHardConstraint plugins ship this pass - see
-        # app/balance/constraint_engine), so this can't change behavior
-        # for any Strategy shipped today.
+        # at all. Ships one concrete plugin by default
+        # (FixedRoleCollisionConstraint), so this is a real prune, not a
+        # no-op, whenever the match has 2+ players hard-forced into the
+        # same position - see app/balance/constraint_engine/plugins/role.py.
         candidate_team_indices = [
             team_index
             for team_index in candidate_team_indices
             if not any(
                 result.prune
                 for result in self.constraint_executor.evaluate_partial(
-                    rosters, team_index, player, players, preferences
+                    rosters, team_index, player, players, preferences, override_player_ids
                 )
             )
         ]
@@ -396,5 +400,8 @@ class BacktrackingSearchEngine(TeamSearchEngine):
             if self._nodes_expanded >= self.max_nodes or time.monotonic() > deadline:
                 break
             rosters[team_index].append(player)
-            self._dfs(players, player_index + 1, rosters, num_teams, preferences, on_leaf, deadline, forced_positions)
+            self._dfs(
+                players, player_index + 1, rosters, num_teams, preferences, on_leaf, deadline, forced_positions,
+                override_player_ids,
+            )
             rosters[team_index].pop()

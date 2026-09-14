@@ -11,8 +11,13 @@ _DIVISION_NUMBER_TO_ROMAN = {"1": "I", "2": "II", "3": "III", "4": "IV"}
 
 def _parse_opgg_tier_text(text: str) -> tuple[str, str]:
     """"diamond 1" -> ("DIAMOND", "I"); "master" -> ("MASTER", "IV" - ignored
-    by _convert_riot_rank for Master+ anyway)."""
+    by _convert_riot_rank for Master+ anyway). Raises ValueError (never
+    IndexError) on empty/unparseable text - e.g. an icon-only tier badge
+    with no text node - so the caller's existing "skip this row, not the
+    whole page" handling actually catches it."""
     parts = text.strip().split()
+    if not parts:
+        raise ValueError(f"empty or unparseable OP.GG tier text: {text!r}")
     tier_word = parts[0].upper()
     division = _DIVISION_NUMBER_TO_ROMAN.get(parts[1], "IV") if len(parts) > 1 else "IV"
     return tier_word, division
@@ -55,11 +60,11 @@ def parse_season_history_html(html: str) -> list[SeasonTierEntry]:
         if not lp_text.isdigit():
             continue
 
-        riot_tier, riot_division = _parse_opgg_tier_text(tier_cell.get_text(strip=True))
         try:
+            riot_tier, riot_division = _parse_opgg_tier_text(tier_cell.get_text(strip=True))
             tier, division, lp = _convert_riot_rank(riot_tier, riot_division, int(lp_text))
         except ValueError:
-            continue  # unrecognized tier text (site changed?) - skip this row, not the whole page
+            continue  # unrecognized/unparseable tier text (site changed?) - skip this row, not the whole page
 
         entries.append(SeasonTierEntry(season=season_cell.get_text(strip=True), tier=tier, division=division, lp=lp))
 

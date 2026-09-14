@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from urllib.parse import quote
 
 import requests
 
@@ -68,7 +69,16 @@ class LiveOpggClient(OpggClient):
     }
 
     def get_season_history(self, game_name: str, tag_line: str, platform: str = "kr") -> list[SeasonTierEntry]:
-        url = f"{self.BASE_URL}/{platform}/{game_name}-{tag_line}"
+        # game_name/tag_line reach here as raw operator input (a Korean
+        # custom tag, a name with spaces, or stray copy-paste whitespace
+        # are all realistic - see app/ocr/parser.py's Hangul tag support)
+        # and used to be dropped straight into the URL unescaped, which
+        # requests does NOT safely percent-encode on its own. An unescaped
+        # space/'#'/non-ASCII character there could silently 404 (read as
+        # "no Peak Tier data") or hit an entirely different URL than
+        # intended, rather than reaching this player's actual OP.GG page.
+        slug = f"{quote(game_name.strip(), safe='')}-{quote(tag_line.strip(), safe='')}"
+        url = f"{self.BASE_URL}/{platform}/{slug}"
         response = requests.get(url, headers=self._HEADERS, timeout=self.REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
         return parse_season_history_html(response.text)

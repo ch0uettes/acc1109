@@ -16,13 +16,31 @@ class ContributionScoreCalculator(ABC):
         ...
 
 
+# A rough "average game" total under OCRContributionScoreCalculator's
+# default weights (kills=4, deaths=4, assists=6, cs=120, gold=8000,
+# damage=10000, vision=15 - a plausible mid-length ranked line), used as
+# DummyContributionScoreCalculator's neutral placeholder. Not derived from
+# player.final_rating: a high-rated player whose OCR row failed to match
+# shouldn't be assumed to have had a great INDIVIDUAL box score this one
+# match (rating reflects long-run skill, not this game), and doing so also
+# put the fallback on a roughly 5-10x smaller scale than a real OCR-derived
+# total (final_rating/100 rarely exceeds ~30, real totals commonly run
+# 50-300) - meaning a player with a missed OCR row could effectively never
+# be picked as MVP no matter how well they actually played. A fixed
+# same-scale neutral value fixes both problems: it doesn't penalize a
+# missed OCR match relative to a real one, and it doesn't secretly reward
+# high-rated players for a game whose stats were never even read.
+NEUTRAL_FALLBACK_TOTAL = 121.0
+
+
 class DummyContributionScoreCalculator(ContributionScoreCalculator):
     """Fallback when no real match_stats exist for a player (e.g. OCR
-    couldn't match their row to a registered nickname): derives a stand-in
-    score from their current rating instead of leaving it at zero."""
+    couldn't match their row to a registered nickname): a fixed neutral
+    placeholder on the same scale as a real OCR-derived score, not derived
+    from the player's rating (see NEUTRAL_FALLBACK_TOTAL)."""
 
     def calculate(self, player: Player, match_stats: dict[str, Any]) -> ContributionScore:
-        return ContributionScore(player_id=player.id, combat=player.final_rating / 100)
+        return ContributionScore(player_id=player.id, combat=NEUTRAL_FALLBACK_TOTAL)
 
 
 class OCRContributionScoreCalculator(ContributionScoreCalculator):

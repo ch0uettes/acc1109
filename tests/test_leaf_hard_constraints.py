@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.balance.constraint_engine.context import ConstraintContext
-from app.balance.constraint_engine.plugins.role import FixedRoleConstraint
+from app.balance.constraint_engine.plugins.role import FixedRoleCollisionConstraint, FixedRoleConstraint
 from app.balance.constraint_engine.plugins.structural import (
     RequiredRoleConstraint,
     TeamSizeConstraint,
@@ -43,6 +43,29 @@ def _team_with_slot(role_source: str) -> Team:
     player = _player(1, 1000)
     slot = TeamSlot(position=Position.SUPPORT, player=player, role_penalty=0.0, role_source=role_source)
     return Team(index=0, players=[player], slots=[slot])
+
+
+def _partial_context(
+    rosters: list[list[Player]],
+    team_index: int,
+    candidate: Player,
+    role_preferences: dict,
+    override_player_ids=frozenset(),
+) -> ConstraintContext:
+    from types import MappingProxyType
+
+    return ConstraintContext(
+        rosters=tuple(tuple(r) for r in rosters),
+        team_index=team_index,
+        candidate_player=candidate,
+        teams=None,
+        player_profiles=tuple(p for r in rosters for p in r) + (candidate,),
+        role_preferences=MappingProxyType(role_preferences),
+        strategy=StableStrategy(),
+        search_policy=StableSearchPolicy(),
+        constraint_priorities=MappingProxyType({}),
+        override_player_ids=override_player_ids,
+    )
 
 
 def test_team_size_constraint_fails_when_team_has_wrong_player_count():
@@ -89,6 +112,44 @@ def test_fixed_role_constraint_passes_when_override_honored():
     team = _team_with_slot(role_source="main")
     result = FixedRoleConstraint().evaluate(_leaf_context([team], override_player_ids=frozenset({1})))
     assert result.status == ConstraintStatus.PASS
+
+
+def test_fixed_role_collision_constraint_passes_when_candidate_is_not_forced():
+    jungler = _player(1, 1000)
+    candidate = _player(2, 1000)
+    result = FixedRoleCollisionConstraint().evaluate(
+        _partial_context([[jungler]], 0, candidate, {1: RolePreference(main=Position.JUNGLE)}, frozenset({1}))
+    )
+    assert result.status == ConstraintStatus.PASS
+    assert result.prune is False
+
+
+def test_fixed_role_collision_constraint_prunes_a_second_forced_player_on_the_same_position():
+    """Regression test for the bug this plugin fixes: two players both
+    hard-forced into JUNGLE used to only get caught by FixedRoleConstraint
+    at the leaf, after a complete (doomed) team was already built - with
+    enough colliding pairs, that could exhaust the whole search budget
+    before finding any satisfying split. This must prune the branch the
+    moment the second forced player would join the first's roster."""
+    seated = _player(1, 1000)
+    candidate = _player(2, 1000)
+    preferences = {1: RolePreference(main=Position.JUNGLE), 2: RolePreference(main=Position.JUNGLE)}
+    result = FixedRoleCollisionConstraint().evaluate(
+        _partial_context([[seated]], 0, candidate, preferences, frozenset({1, 2}))
+    )
+    assert result.status == ConstraintStatus.FAIL
+    assert result.prune is True
+
+
+def test_fixed_role_collision_constraint_allows_forced_players_on_different_positions():
+    seated = _player(1, 1000)
+    candidate = _player(2, 1000)
+    preferences = {1: RolePreference(main=Position.JUNGLE), 2: RolePreference(main=Position.TOP)}
+    result = FixedRoleCollisionConstraint().evaluate(
+        _partial_context([[seated]], 0, candidate, preferences, frozenset({1, 2}))
+    )
+    assert result.status == ConstraintStatus.PASS
+    assert result.prune is False
 
 
 def test_search_engine_rejects_candidates_that_dont_honor_a_fixed_role_override():
