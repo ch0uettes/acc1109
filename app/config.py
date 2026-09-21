@@ -21,8 +21,18 @@ class Settings:
 
 def _build_settings() -> Settings:
     base_dir = Path(__file__).resolve().parent.parent
-    data_dir = base_dir / "data"
-    data_dir.mkdir(exist_ok=True)
+    # Vercel's deployment bundle is read-only outside /tmp (and /tmp is
+    # wiped between cold starts) - `data/` isn't even in the bundle at all
+    # (gitignored), so mkdir()'ing it at the local-dev path would raise
+    # OSError on *every* cold start, before any request is served (this
+    # was observed directly: FUNCTION_INVOCATION_FAILED on literally every
+    # route, including /health, on a deploy with no DATABASE_URL set).
+    # DATABASE_URL should always be set to a real Postgres in production
+    # (see DEPLOY_VERCEL.md) - this fallback only keeps an unconfigured
+    # deploy from hard-crashing instead of degrading (non-persistent
+    # SQLite) until that's fixed.
+    data_dir = Path("/tmp/data") if os.environ.get("VERCEL") else base_dir / "data"
+    data_dir.mkdir(exist_ok=True, parents=True)
     db_path = data_dir / "app.db"
     # Local dev defaults to a SQLite file; deployed instances (e.g. Streamlit
     # Community Cloud, whose filesystem is wiped on every redeploy) set
