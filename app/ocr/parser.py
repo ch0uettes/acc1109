@@ -16,10 +16,22 @@ PLAYERS_PER_TEAM = 5
 
 _KDA_PATTERN = re.compile(r"(\d+)\s*/\s*(\d+)\s*/\s*(\d+)")
 _GOLD_PATTERN = re.compile(r"\d{1,3}(?:,\d{3})+")
-# The scoreboard splits teams with an explicit "1번 팀" / "2번 팀" label row
-# (which also carries the *team's* aggregate KDA - easy to mistake for a
-# player row, so it's matched and skipped explicitly before anything else).
-_TEAM_HEADER_PATTERN = re.compile(r"\d+\s*번\s*팀")
+# The scoreboard splits teams with a team-number header row (which also
+# carries that *team's* aggregate KDA - easy to mistake for a player row,
+# so it's matched and skipped explicitly before anything else). Captures
+# the team number itself so the caller can use it directly instead of a
+# first-seen/not-first-seen toggle - see parse_rows_into_players.
+#
+# The real client text is "1 팀" / "2 팀" - no "번" - confirmed directly
+# against real screenshots via both Tesseract and Google Vision. The
+# previous pattern here required a literal "번" that never actually
+# appears in this client's UI text, so header rows were never recognized
+# at all: each one fell through to the KDA check below and got parsed as
+# an 11th phantom "player" (its own team-aggregate KDA matching
+# _KDA_PATTERN), which then threw off the positional 5-then-5 fallback
+# split for every row after it - observed directly as a real participant
+# (row 6, right after 5 legitimate rows) landing in the wrong team.
+_TEAM_HEADER_PATTERN = re.compile(r"(?:^|\s)(\d+)\s*번?\s*팀(?!\S)")
 
 # The detail/stat-comparison screenshot (CS, vision, damage, ...) has no
 # player names at all - just one column per player in the same left-to-right,
@@ -185,8 +197,9 @@ def parse_rows_into_players(
     for row in rows:
         text = _row_text(row)
 
-        if _TEAM_HEADER_PATTERN.search(text):
-            current_team = 1 if saw_team_header else 0
+        header_match = _TEAM_HEADER_PATTERN.search(text)
+        if header_match:
+            current_team = int(header_match.group(1)) - 1
             saw_team_header = True
             continue
 
