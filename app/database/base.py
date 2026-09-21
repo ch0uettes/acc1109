@@ -34,6 +34,14 @@ def _build_engine():
         pool_size=1,
         max_overflow=0,
         pool_recycle=280,
+        # Without this, psycopg2 falls back to negotiating client_encoding
+        # from the runtime's locale - Vercel's Python container doesn't set
+        # one the same way local dev does, and was observed decoding
+        # correctly-stored UTF-8 Korean text as CP949 instead (real data
+        # came back as garbage, e.g. "기본 서버" -> "湲곕낯 ..."). Forcing
+        # UTF8 here makes the client_encoding explicit instead of
+        # environment-dependent.
+        connect_args={"client_encoding": "utf8"},
     )
 
 
