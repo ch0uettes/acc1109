@@ -41,3 +41,32 @@ def _startup() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/debug/encoding")
+def debug_encoding() -> dict:
+    """Temporary diagnostic for the Vercel Korean-text-garbling issue -
+    pinpoints whether the corruption is already baked into the Python
+    string psycopg2 hands back (DB/driver-side) or introduced later
+    (JSON serialization/response encoding). Remove once resolved."""
+    import locale
+    import os
+
+    from sqlalchemy import text
+
+    from app.database.base import engine
+
+    with engine.connect() as conn:
+        client_encoding = conn.execute(text("SHOW client_encoding")).scalar()
+        name = conn.execute(text("SELECT name FROM servers WHERE id = 1")).scalar()
+
+    return {
+        "locale_preferred_encoding": locale.getpreferredencoding(False),
+        "sys_default_encoding": __import__("sys").getdefaultencoding(),
+        "env_LANG": os.environ.get("LANG"),
+        "env_LC_ALL": os.environ.get("LC_ALL"),
+        "env_PYTHONIOENCODING": os.environ.get("PYTHONIOENCODING"),
+        "db_client_encoding": client_encoding,
+        "raw_name_repr": repr(name),
+        "raw_name_hex": name.encode("utf-8", errors="surrogateescape").hex() if name else None,
+    }
