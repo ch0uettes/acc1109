@@ -60,6 +60,58 @@ export interface ServerMembership {
   created_at: string;
 }
 
+export interface RolePreference {
+  main: Position;
+  sub: Position | null;
+}
+
+export interface TeamSlot {
+  position: Position;
+  player: Player;
+  role_penalty: number;
+  role_source: "main" | "sub" | "other";
+}
+
+export interface Team {
+  index: number;
+  players: Player[];
+  slots: TeamSlot[] | null;
+}
+
+export interface FeatureContribution {
+  name: string;
+  raw: number;
+  normalized: number;
+  weight: number;
+  contribution: number;
+  contribution_pct: number;
+}
+
+export interface BalanceResult {
+  teams: Team[];
+  cost: number;
+  cost_breakdown: Record<string, number>;
+  contributions: FeatureContribution[];
+  iterations: number;
+}
+
+export interface GenerateTeamsResponse {
+  results: BalanceResult[];
+  decision_log_draft: unknown;
+}
+
+export interface SavedRosterEntry {
+  position: Position;
+  player: Player | null;
+}
+
+export interface SavedTeam {
+  index: number;
+  entries: SavedRosterEntry[];
+}
+
+export type Strategy = "competitive" | "comfort" | "stable";
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 export class ApiError extends Error {
@@ -141,4 +193,30 @@ export const api = {
       body: { seed_tier: seedTier, seed_division: seedDivision },
       actorName,
     }),
+
+  generateTeams: (
+    serverId: number,
+    payload: {
+      player_ids: number[];
+      overrides?: { player_id: number; match_override?: RolePreference | null; enforce_fixed_role?: boolean }[];
+      k?: number;
+      strategy?: Strategy;
+    }
+  ) => request<GenerateTeamsResponse>(`/servers/${serverId}/teams/generate`, { method: "POST", body: payload }),
+  saveTeams: (
+    serverId: number,
+    actorName: string,
+    payload: { teams: Team[]; decision_log_draft?: unknown; chosen_rank?: number; reason?: string | null }
+  ) =>
+    request<number[]>(`/servers/${serverId}/teams/save`, {
+      method: "POST",
+      body: payload,
+      actorName,
+    }),
+  listSavedRuns: (serverId: number, limit = 20) =>
+    request<string[]>(`/servers/${serverId}/teams/runs?limit=${limit}`),
+  loadSavedRun: (serverId: number, generatedAt: string) =>
+    request<SavedTeam[]>(`/servers/${serverId}/teams/runs/${encodeURIComponent(generatedAt)}`),
+  savedRunExportUrl: (serverId: number, generatedAt: string, format: "txt" | "xlsx") =>
+    `${BASE_URL}/servers/${serverId}/teams/runs/${encodeURIComponent(generatedAt)}/export.${format}`,
 };
