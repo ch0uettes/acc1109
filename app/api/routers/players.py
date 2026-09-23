@@ -238,6 +238,20 @@ def infer_position(server_id: int, player_id: int, db: Session = Depends(get_db)
     return service.infer_position(player.puuid)
 
 
+class InferPositionByPuuidRequest(BaseModel):
+    puuid: str
+
+
+@router.post("/infer-position", response_model=Optional[RoleRecommendation])
+def infer_position_by_puuid(
+    server_id: int, payload: InferPositionByPuuidRequest, db: Session = Depends(get_db)
+) -> Optional[RoleRecommendation]:
+    """Same as GET /{player_id}/infer-position but for the pre-registration
+    Riot-lookup flow, where there's no Player row yet to look a puuid up
+    from - only the probe()'d puuid itself."""
+    return _service(server_id, db).infer_position(payload.puuid)
+
+
 class PeakTierResponse(BaseModel):
     tier_snapshot: TierSnapshot
     season: str

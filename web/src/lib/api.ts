@@ -84,6 +84,27 @@ export interface ConstraintInfo {
   current_priority: number;
 }
 
+export interface TierSnapshot {
+  tier: Tier;
+  division: Division;
+  lp: number;
+}
+
+export interface RoleRecommendation {
+  main: Position;
+  main_ratio: number;
+  sub: Position | null;
+  sub_ratio: number | null;
+  sample_size: number;
+}
+
+export interface OCRRiotIdRow {
+  nickname: string;
+  game_name: string;
+  tag_line: string;
+  raw_text: string;
+}
+
 export interface RoleChange {
   id: number | null;
   server_id: number;
@@ -300,6 +321,86 @@ export const api = {
       body: { seed_tier: seedTier, seed_division: seedDivision },
       actorName,
     }),
+  overrideInternalRating: (
+    serverId: number,
+    actorName: string,
+    playerId: number,
+    newInternalRating: number,
+    reason?: string
+  ) =>
+    request<Player>(`/servers/${serverId}/players/${playerId}/internal-rating`, {
+      method: "POST",
+      body: { new_internal_rating: newInternalRating, reason },
+      actorName,
+    }),
+  updatePlayer: (serverId: number, actorName: string, player: Player) =>
+    request<Player>(`/servers/${serverId}/players/${player.id}`, {
+      method: "PUT",
+      body: player,
+      actorName,
+    }),
+  refreshPlayerFromRiot: (serverId: number, actorName: string, playerId: number) =>
+    request<Player>(`/servers/${serverId}/players/${playerId}/refresh`, { method: "POST", actorName }),
+  probeCurrentSeason: (serverId: number, gameName: string, tagLine: string) =>
+    request<{ puuid: string; current: TierSnapshot | null }>(`/servers/${serverId}/players/probe`, {
+      method: "POST",
+      body: { game_name: gameName, tag_line: tagLine },
+    }),
+  inferPosition: (serverId: number, playerId: number) =>
+    request<RoleRecommendation | null>(`/servers/${serverId}/players/${playerId}/infer-position`),
+  inferPositionByPuuid: (serverId: number, puuid: string) =>
+    request<RoleRecommendation | null>(`/servers/${serverId}/players/infer-position`, {
+      method: "POST",
+      body: { puuid },
+    }),
+  resolvePeakTier: (serverId: number, gameName: string, tagLine: string, current: TierSnapshot | null) => {
+    const params = new URLSearchParams({ game_name: gameName, tag_line: tagLine });
+    if (current) {
+      params.set("current_tier", current.tier);
+      params.set("current_division", current.division);
+      params.set("current_lp", String(current.lp));
+    }
+    return request<{ tier_snapshot: TierSnapshot; season: string } | null>(
+      `/servers/${serverId}/players/lookup/peak-tier?${params.toString()}`
+    );
+  },
+  registerPlayer: (
+    serverId: number,
+    actorName: string,
+    payload: {
+      nickname: string;
+      puuid: string;
+      main_role: Position;
+      sub_role?: Position | null;
+      current?: TierSnapshot | null;
+      peak?: TierSnapshot | null;
+      seed_tier?: Tier | null;
+      seed_division?: Division;
+      peak_achieved_season?: string | null;
+      recommendation?: RoleRecommendation | null;
+      reason?: string | null;
+    }
+  ) => request<Player>(`/servers/${serverId}/players/register`, { method: "POST", body: payload, actorName }),
+  extractRiotIds: async (file: File): Promise<OCRRiotIdRow[]> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE_URL}/ocr/riot-ids`, { method: "POST", body: form });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new ApiError(res.status, detail.detail ?? res.statusText);
+    }
+    return res.json();
+  },
+  parseRosterFile: async (serverId: number, file: File): Promise<OCRRiotIdRow[]> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE_URL}/servers/${serverId}/players/roster-file`, { method: "POST", body: form });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new ApiError(res.status, detail.detail ?? res.statusText);
+    }
+    return res.json();
+  },
 
   generateTeams: (
     serverId: number,
