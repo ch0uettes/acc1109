@@ -112,6 +112,53 @@ export interface SavedTeam {
 
 export type Strategy = "competitive" | "comfort" | "stable";
 
+export interface OCRPlayerRow {
+  raw_name: string;
+  matched_player_id: number | null;
+  champion: string;
+  team_index: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  cs: number;
+  gold: number;
+  damage: number;
+  vision_score: number;
+}
+
+export interface MatchResultData {
+  participants: OCRPlayerRow[];
+  winning_team_index: number | null;
+  raw_text: string;
+}
+
+export interface ContributionScore {
+  player_id: number;
+  combat: number;
+  vision: number;
+  objective: number;
+  economy: number;
+  death_penalty: number;
+}
+
+export interface MatchPlayerResult {
+  player_id: number;
+  team_index: number;
+  position: Position;
+  contribution: ContributionScore;
+}
+
+export interface Match {
+  id: number | null;
+  server_id: number | null;
+  played_at: string;
+  participants: MatchPlayerResult[];
+  winning_team_index: number;
+  ai_mvp_player_id: number | null;
+  user_mvp_player_id: number | null;
+  note: string | null;
+}
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 export class ApiError extends Error {
@@ -219,4 +266,70 @@ export const api = {
     request<SavedTeam[]>(`/servers/${serverId}/teams/runs/${encodeURIComponent(generatedAt)}`),
   savedRunExportUrl: (serverId: number, generatedAt: string, format: "txt" | "xlsx") =>
     `${BASE_URL}/servers/${serverId}/teams/runs/${encodeURIComponent(generatedAt)}/export.${format}`,
+
+  recordMatch: (
+    serverId: number,
+    actorName: string,
+    payload: {
+      teams: Team[];
+      winning_team_index: number;
+      note?: string | null;
+      match_stats_by_player_id?: Record<
+        number,
+        { kills: number; deaths: number; assists: number; cs: number; gold: number; damage: number; vision_score: number }
+      >;
+    }
+  ) => request<Match>(`/servers/${serverId}/matches`, { method: "POST", body: payload, actorName }),
+
+  extractMatchResult: async (
+    serverId: number,
+    file: File,
+    knownNicknames: string[]
+  ): Promise<MatchResultData> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(
+      `${BASE_URL}/ocr/match-result?known_nicknames=${encodeURIComponent(knownNicknames.join(","))}`,
+      { method: "POST", body: form }
+    );
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new ApiError(res.status, detail.detail ?? res.statusText);
+    }
+    return res.json();
+  },
+
+  mergeDetailStats: async (
+    file: File,
+    participants: OCRPlayerRow[]
+  ): Promise<{ participants: OCRPlayerRow[]; matched_count: number; ambiguous_names: string[] }> => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("participants", JSON.stringify(participants));
+    const res = await fetch(`${BASE_URL}/ocr/detail-stats/merge`, { method: "POST", body: form });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new ApiError(res.status, detail.detail ?? res.statusText);
+    }
+    return res.json();
+  },
+
+  listPendingVotes: (serverId: number) => request<Match[]>(`/servers/${serverId}/matches/pending-votes`),
+  castVote: (serverId: number, actorName: string, matchId: number, voterPlayerId: number, votedPlayerId: number) =>
+    request(`/servers/${serverId}/matches/${matchId}/votes`, {
+      method: "POST",
+      body: { voter_player_id: voterPlayerId, voted_player_id: votedPlayerId },
+      actorName,
+    }),
+  tallyVote: (serverId: number, matchId: number) =>
+    request<number | null>(`/servers/${serverId}/matches/${matchId}/votes/tally`),
+  setUserMvp: (serverId: number, actorName: string, matchId: number, playerId: number) =>
+    request<void>(`/servers/${serverId}/matches/${matchId}/user-mvp`, {
+      method: "POST",
+      body: { player_id: playerId },
+      actorName,
+    }),
+
+  leaderboard: (serverId: number) => request<Player[]>(`/servers/${serverId}/stats/leaderboard`),
+  aiMvpAccuracy: (serverId: number) => request<number>(`/servers/${serverId}/stats/ai-mvp-accuracy`),
 };
