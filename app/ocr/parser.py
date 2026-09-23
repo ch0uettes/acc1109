@@ -350,3 +350,39 @@ def extract_detail_stats(rows: list[list[tuple[float, str]]]) -> dict[str, list]
     stats: dict[str, list] = {key: _extract_labeled_row_numbers(rows, label) for key, label in STAT_LABELS.items()}
     stats["kda"] = extract_kda_order(rows)
     return stats
+
+
+def match_detail_stats_by_kda(
+    participants: list[dict], detail_stats: dict[str, list]
+) -> tuple[int, list[str]]:
+    """Joins the detail (CS/vision/damage/gold) screenshot's columns back to
+    the main scoreboard's participants by K/D/A - the detail screenshot has
+    no names, and its column order isn't guaranteed to match the
+    scoreboard's row order (observed directly: one team's order matched,
+    the other team's didn't), so KDA is the most reliable join key
+    available. It is not a true identifier though: two participants can
+    genuinely share one (e.g. two 0/0/0 supports in a short game). Mutates
+    each *unambiguously* matched participant dict in place with its stats.
+    Returns (matched_count, ambiguous_names) - names sharing a KDA with at
+    least one other participant are deliberately left unmatched rather than
+    guessed, since silently assigning one player's stats to a different
+    player who happens to share their KDA would be wrong data with no
+    indication anything went wrong."""
+    by_kda: dict[tuple[int, int, int], list[dict]] = {}
+    for p in participants:
+        by_kda.setdefault((p["kills"], p["deaths"], p["assists"]), []).append(p)
+    ambiguous_names = [p["raw_name"] for group in by_kda.values() if len(group) > 1 for p in group]
+
+    kda_order = detail_stats.get("kda", [])
+    matched_count = 0
+    for i, kda in enumerate(kda_order):
+        candidates = by_kda.get(tuple(kda), [])
+        if len(candidates) != 1:
+            continue
+        target = candidates[0]
+        for stat_name in ("cs", "vision_score", "damage", "gold"):
+            values = detail_stats.get(stat_name, [])
+            if i < len(values):
+                target[stat_name] = values[i]
+        matched_count += 1
+    return matched_count, ambiguous_names

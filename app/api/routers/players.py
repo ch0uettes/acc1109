@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -12,8 +12,10 @@ from app.models.player import Player
 from app.models.season_rank import PlayerSeasonRank
 from app.models.seed_rating_change import SeedRatingChange
 from app.models.server_membership import ServerMembership
+from app.ocr.schemas import OCRRiotIdRow
 from app.position.schemas import RoleRecommendation
 from app.rating.resolver import TierSnapshot
+from app.roster_import import UnsupportedRosterFileError, parse_roster_file
 from app.services.player_service import PlayerService
 from app.utils.enums import Division, Position, Tier
 
@@ -103,6 +105,18 @@ def create_player(
         sub_role=payload.sub_role,
     )
     return _service(server_id, db).create_player(player, actor.role)
+
+
+@router.post("/roster-file", response_model=list[OCRRiotIdRow])
+async def parse_roster_upload(server_id: int, file: UploadFile = File(...)) -> list[OCRRiotIdRow]:
+    """CSV/TXT/XLSX counterpart to the screenshot-OCR bulk-registration
+    path (see /ocr/riot-ids) - both feed the same nickname/game_name/
+    tag_line review table, a file is just a more reliable input than OCR
+    when the operator already has one."""
+    try:
+        return parse_roster_file(await file.read(), file.filename or "roster")
+    except UnsupportedRosterFileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/probe", response_model=ProbeResponse)
