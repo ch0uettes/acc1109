@@ -44,11 +44,56 @@ export interface Player {
   is_active: boolean;
 }
 
+export interface NormalizationConfig {
+  mean_balance_midpoint: number;
+  mean_balance_steepness: number;
+  internal_rating_midpoint: number;
+  internal_rating_steepness: number;
+  lane_difference_max: number;
+  team_variance_scale: number;
+  outlier_penalty_midpoint: number;
+  outlier_penalty_steepness: number;
+  tier_distribution_breakpoints: [number, number][];
+  role_penalty_max: number;
+}
+
+export interface HardConstraintConfig {
+  mean_balance_diff_max: number | null;
+  lane_diff_max: number | null;
+  team_variance_max: number | null;
+  minimum_main_role_ratio: number | null;
+}
+
 export interface Server {
   id: number;
   name: string;
   discord_guild_id: string | null;
   created_at: string;
+  normalization_config: NormalizationConfig;
+  hard_constraint_config: HardConstraintConfig;
+  current_season_label: string;
+  constraint_priorities: Record<string, number>;
+}
+
+export interface ConstraintInfo {
+  name: string;
+  description: string;
+  tier: string;
+  pipeline: string;
+  default_priority: number;
+  current_priority: number;
+}
+
+export interface RoleChange {
+  id: number | null;
+  server_id: number;
+  membership_id: number;
+  target_display_name: string;
+  old_role: Role | null;
+  new_role: Role;
+  changed_by: string;
+  changed_at: string;
+  reason: string | null;
 }
 
 export interface ServerMembership {
@@ -349,4 +394,51 @@ export const api = {
   aiMvpAccuracy: (serverId: number) => request<number>(`/servers/${serverId}/stats/ai-mvp-accuracy`),
   recentDecisions: (serverId: number, limit = 20) =>
     request<DecisionLogEntry[]>(`/servers/${serverId}/stats/decisions?limit=${limit}`),
+
+  getServer: async (serverId: number): Promise<Server> => {
+    // No single-server GET endpoint exists on the backend - only
+    // list-all and server-scoped sub-resources.
+    const servers = await request<Server[]>("/servers");
+    const found = servers.find((s) => s.id === serverId);
+    if (!found) throw new ApiError(404, "Server not found");
+    return found;
+  },
+  listMembers: (serverId: number) => request<ServerMembership[]>(`/servers/${serverId}/members`),
+  promoteMember: (serverId: number, actorDisplayName: string, targetDisplayName: string, reason?: string) =>
+    request<ServerMembership>(`/servers/${serverId}/members/promote`, {
+      method: "POST",
+      body: { actor_display_name: actorDisplayName, target_display_name: targetDisplayName, reason },
+    }),
+  demoteMember: (serverId: number, actorDisplayName: string, targetDisplayName: string, reason?: string) =>
+    request<ServerMembership>(`/servers/${serverId}/members/demote`, {
+      method: "POST",
+      body: { actor_display_name: actorDisplayName, target_display_name: targetDisplayName, reason },
+    }),
+  transferOwnership: (serverId: number, actorDisplayName: string, targetDisplayName: string, reason?: string) =>
+    request<ServerMembership>(`/servers/${serverId}/members/transfer-ownership`, {
+      method: "POST",
+      body: { actor_display_name: actorDisplayName, target_display_name: targetDisplayName, reason },
+    }),
+  roleChangeHistory: (serverId: number) => request<RoleChange[]>(`/servers/${serverId}/role-changes`),
+  updateSeasonLabel: (serverId: number, actorDisplayName: string, label: string) =>
+    request<Server>(`/servers/${serverId}/season-label`, {
+      method: "PUT",
+      body: { actor_display_name: actorDisplayName, label },
+    }),
+  updateBalanceConfig: (
+    serverId: number,
+    actorDisplayName: string,
+    normalization: NormalizationConfig,
+    hardConstraint: HardConstraintConfig
+  ) =>
+    request<Server>(`/servers/${serverId}/balance-config`, {
+      method: "PUT",
+      body: { actor_display_name: actorDisplayName, normalization, hard_constraint: hardConstraint },
+    }),
+  listConstraints: (serverId: number) => request<ConstraintInfo[]>(`/servers/${serverId}/constraints`),
+  updateConstraintPriorities: (serverId: number, actorDisplayName: string, priorities: Record<string, number>) =>
+    request<Server>(`/servers/${serverId}/constraint-priorities`, {
+      method: "PUT",
+      body: { actor_display_name: actorDisplayName, priorities },
+    }),
 };
