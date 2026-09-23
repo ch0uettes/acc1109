@@ -17,6 +17,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/players">참가자 관리</Link>
             <Link href="/teams">팀 생성</Link>
             <Link href="/matches">경기 저장</Link>
+            <Link href="/votes">MVP 투표</Link>
+            <Link href="/stats">통계</Link>
           </div>
         </nav>
         <main className="container">{children}</main>

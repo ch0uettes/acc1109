@@ -43,3 +43,17 @@ def register_exception_handlers(app: FastAPI) -> None:
         # constraint) - get_db's rollback already unstuck the session,
         # this just turns it into a client-facing 409 instead of a 500.
         return JSONResponse(status_code=409, content={"detail": "이미 존재하는 데이터와 충돌했습니다 (중복)."})
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        # Without this, an unhandled exception propagates past
+        # CORSMiddleware to Starlette's ServerErrorMiddleware, which
+        # returns a bare 500 with no CORS headers - the browser then
+        # reports it to the frontend as a generic "Failed to fetch"
+        # network error instead of a readable 500, since a cross-origin
+        # response missing CORS headers is indistinguishable from a
+        # network failure from the fetch() caller's side (observed
+        # directly debugging the vote-casting flow). This still returns
+        # 500 - it just makes sure the response actually reaches the
+        # client instead of looking like the request never happened.
+        return JSONResponse(status_code=500, content={"detail": f"Internal server error: {exc}"})

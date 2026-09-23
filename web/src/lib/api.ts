@@ -112,6 +112,21 @@ export interface SavedTeam {
 
 export type Strategy = "competitive" | "comfort" | "stable";
 
+export interface DecisionLogEntry {
+  id: number | null;
+  server_id: number;
+  execution_id: string | null;
+  created_at: string;
+  strategy_name: string;
+  search_policy_name: string | null;
+  player_ids: number[];
+  candidate_count: number | null;
+  execution_time_seconds: number | null;
+  chosen_rank: number;
+  chosen_at: string;
+  reason: string | null;
+}
+
 export interface OCRPlayerRow {
   raw_name: string;
   matched_player_id: number | null;
@@ -332,4 +347,6 @@ export const api = {
 
   leaderboard: (serverId: number) => request<Player[]>(`/servers/${serverId}/stats/leaderboard`),
   aiMvpAccuracy: (serverId: number) => request<number>(`/servers/${serverId}/stats/ai-mvp-accuracy`),
+  recentDecisions: (serverId: number, limit = 20) =>
+    request<DecisionLogEntry[]>(`/servers/${serverId}/stats/decisions?limit=${limit}`),
 };
