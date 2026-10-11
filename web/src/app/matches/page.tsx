@@ -94,7 +94,7 @@ export default function MatchesPage() {
           if (player) statsByPlayerId[player.id] = row;
         }
       }
-      const match = await api.recordMatch(serverId, actorName, {
+      const match = await api.recordMatch(serverId, {
         teams,
         winning_team_index: winnerIndex,
         note: note || null,

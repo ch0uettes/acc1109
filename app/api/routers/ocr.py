@@ -4,14 +4,17 @@ import json
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel
 
+from app.api.deps import get_member
 from app.ocr.extractor import build_ocr_extractor
 from app.ocr.parser import match_detail_stats_by_kda
 from app.ocr.schemas import MatchResultData, OCRPlayerRow, OCRRiotIdRow
 
-router = APIRouter(prefix="/ocr", tags=["ocr"])
+# Not server-scoped, but every call bills Google Vision - any logged-in
+# member of any server may use it, a stranger with no token may not.
+router = APIRouter(prefix="/ocr", tags=["ocr"], dependencies=[Depends(get_member)])
 
 
 def _save_upload(file: UploadFile, contents: bytes) -> str:

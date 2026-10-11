@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import "./globals.css";
+import Nav from "./nav";
 
 export const metadata: Metadata = {
   title: "AI Inhouse Balancer",
@@ -11,17 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ko">
       <body>
-        <nav className="nav">
-          <div>
-            <Link href="/">서버 선택</Link>
-            <Link href="/players">참가자 관리</Link>
-            <Link href="/teams">팀 생성</Link>
-            <Link href="/matches">경기 저장</Link>
-            <Link href="/votes">MVP 투표</Link>
-            <Link href="/stats">통계</Link>
-            <Link href="/admin">서버 관리</Link>
-          </div>
-        </nav>
+        <Nav />
         <main className="container">{children}</main>
       </body>
     </html>

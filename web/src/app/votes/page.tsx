@@ -58,7 +58,7 @@ export default function VotesPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.castVote(serverId, actorName, selectedMatchId, Number(voterId), Number(votedId));
+      await api.castVote(serverId, selectedMatchId, Number(voterId), Number(votedId));
       setInfo("투표 완료");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -72,7 +72,7 @@ export default function VotesPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.setUserMvp(serverId, actorName, selectedMatchId, tally);
+      await api.setUserMvp(serverId, selectedMatchId, tally);
       setInfo(`User MVP를 ${playersById.get(tally)?.nickname ?? tally}(으)로 확정했습니다.`);
       setSelectedMatchId(null);
       refresh();

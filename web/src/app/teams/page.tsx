@@ -141,7 +141,7 @@ export default function TeamsPage() {
     setError(null);
     try {
       const chosen = generateResponse.results[comboIndex];
-      await api.saveTeams(serverId, actorName, {
+      await api.saveTeams(serverId, {
         teams: chosen.teams,
         decision_log_draft: generateResponse.decision_log_draft,
         chosen_rank: comboIndex + 1,
@@ -183,16 +183,24 @@ export default function TeamsPage() {
             </select>
             {selectedRun && (
               <>
-                <a href={api.savedRunExportUrl(serverId, selectedRun, "txt")}>
-                  <button type="button" className="secondary">
-                    TXT 다운로드
-                  </button>
-                </a>
-                <a href={api.savedRunExportUrl(serverId, selectedRun, "xlsx")}>
-                  <button type="button" className="secondary">
-                    엑셀 다운로드
-                  </button>
-                </a>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() =>
+                    api.downloadSavedRun(serverId, selectedRun, "txt").catch((e) => setError(String(e)))
+                  }
+                >
+                  TXT 다운로드
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() =>
+                    api.downloadSavedRun(serverId, selectedRun, "xlsx").catch((e) => setError(String(e)))
+                  }
+                >
+                  엑셀 다운로드
+                </button>
               </>
             )}
           </div>

@@ -44,6 +44,11 @@ class DuplicateMembershipError(AppError):
     two near-simultaneous self-registrations/promotions of the same name."""
 
 
+class AuthenticationError(AppError):
+    """Raised for a missing/invalid/expired access token, or a wrong
+    server entry code / admin PIN at login."""
+
+
 class DuplicateServerError(AppError):
     """Raised when a server insert collides with the discord_guild_id
     unique constraint - another server is already linked to that guild."""

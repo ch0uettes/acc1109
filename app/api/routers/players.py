@@ -19,7 +19,7 @@ from app.roster_import import UnsupportedRosterFileError, parse_roster_file
 from app.services.player_service import PlayerService
 from app.utils.enums import Division, Position, Tier
 
-router = APIRouter(prefix="/servers/{server_id}/players", tags=["players"])
+router = APIRouter(prefix="/servers/{server_id}/players", tags=["players"], dependencies=[Depends(get_actor)])
 
 
 class CreatePlayerRequest(BaseModel):

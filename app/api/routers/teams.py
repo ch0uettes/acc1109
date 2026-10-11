@@ -32,7 +32,7 @@ from app.services.player_service import PlayerService
 from app.services.server_service import ServerService
 from app.services.team_service import TeamService
 
-router = APIRouter(prefix="/servers/{server_id}/teams", tags=["teams"])
+router = APIRouter(prefix="/servers/{server_id}/teams", tags=["teams"], dependencies=[Depends(get_actor)])
 
 STRATEGY_CHOICES = tuple(STRATEGY_REGISTRY.keys())
 

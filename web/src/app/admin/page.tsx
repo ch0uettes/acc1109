@@ -11,12 +11,14 @@ import {
   RoleChange,
   Server,
   ServerMembership,
+  SessionResponse,
 } from "@/lib/api";
-import { useSession } from "@/lib/session";
+import { saveSession, useSession } from "@/lib/session";
 
 export default function AdminPage() {
   const router = useRouter();
-  const { serverId, actorName, loaded } = useSession();
+  const { serverId, actorName, role, isAdmin, loaded } = useSession();
+  const isOwner = role === "OWNER";
 
   const [server, setServer] = useState<Server | null>(null);
   const [members, setMembers] = useState<ServerMembership[]>([]);
@@ -30,13 +32,17 @@ export default function AdminPage() {
   const [norm, setNorm] = useState<NormalizationConfig | null>(null);
   const [hard, setHard] = useState<HardConstraintConfig | null>(null);
   const [priorities, setPriorities] = useState<Record<string, number>>({});
+  const [newJoinCode, setNewJoinCode] = useState("");
+  const [resetPinTarget, setResetPinTarget] = useState("");
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
 
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(() => {
-    if (!serverId) return;
+    if (!serverId || !isAdmin) return;
     api.getServer(serverId).then((s) => {
       setServer(s);
       setSeasonLabel(s.current_season_label);
@@ -49,7 +55,7 @@ export default function AdminPage() {
       setConstraints(list);
       setPriorities(Object.fromEntries(list.map((c) => [c.name, c.current_priority])));
     }).catch(() => undefined);
-  }, [serverId]);
+  }, [serverId, isAdmin]);
 
   useEffect(() => {
     if (loaded && (!serverId || !actorName)) {
@@ -62,8 +68,15 @@ export default function AdminPage() {
   async function run(action: () => Promise<unknown>, successMsg: string) {
     setBusy(true);
     setError(null);
+    setInfo(null);
     try {
-      await action();
+      const result = await action();
+      // Entry-code and PIN changes re-issue our own token (the old one is
+      // pinned to the old value) - keep the session alive with the new one.
+      if (result && typeof result === "object" && "token" in result && "member" in result) {
+        const session = result as SessionResponse;
+        saveSession(session.member, session.token);
+      }
       setInfo(successMsg);
       refresh();
     } catch (e) {
@@ -74,16 +87,33 @@ export default function AdminPage() {
   }
 
   if (!loaded || !serverId || !actorName) return null;
+  if (!isAdmin) {
+    return (
+      <div>
+        <h1>서버 관리</h1>
+        <p className="muted">Owner 또는 Server Admin만 사용할 수 있는 메뉴입니다.</p>
+      </div>
+    );
+  }
 
   const players = members.filter((m) => m.role === "PLAYER").map((m) => m.display_name);
   const admins = members.filter((m) => m.role === "SERVER_ADMIN").map((m) => m.display_name);
   const others = members.filter((m) => m.display_name !== actorName).map((m) => m.display_name);
+  const pinHolders = members
+    .filter((m) => m.has_pin && m.display_name !== actorName)
+    .map((m) => m.display_name);
 
   return (
     <div>
       <h1>서버 관리</h1>
       {error && <p className="error">{error}</p>}
       {info && <p className="muted">{info}</p>}
+      {server && !server.has_join_code && (
+        <p className="error">
+          입장 코드가 설정되지 않아 누구나 이 서버에 들어올 수 있습니다.
+          {isOwner ? " 아래에서 입장 코드를 설정하세요." : " Owner에게 입장 코드 설정을 요청하세요."}
+        </p>
+      )}
 
       <div className="card">
         <h3>멤버 목록</h3>
@@ -92,6 +122,7 @@ export default function AdminPage() {
             <tr>
               <th>이름</th>
               <th>역할</th>
+              <th>PIN</th>
             </tr>
           </thead>
           <tbody>
@@ -99,6 +130,7 @@ export default function AdminPage() {
               <tr key={m.id}>
                 <td>{m.display_name}</td>
                 <td>{m.role}</td>
+                <td>{m.role === "PLAYER" ? "-" : m.has_pin ? "설정됨" : "미설정 (다음 입장 시 설정)"}</td>
               </tr>
             ))}
           </tbody>
@@ -121,7 +153,7 @@ export default function AdminPage() {
           </datalist>
           <button
             onClick={() =>
-              run(() => api.promoteMember(serverId, actorName, promoteTarget), `${promoteTarget}을(를) 승급했습니다.`)
+              run(() => api.promoteMember(serverId, promoteTarget), `${promoteTarget}을(를) 승급했습니다.`)
             }
             disabled={busy || !promoteTarget}
           >
@@ -130,7 +162,91 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {admins.length > 0 && (
+      {isOwner && (
+        <div className="card">
+          <h3>입장 코드</h3>
+          <p className="muted">
+            {server?.has_join_code ? "설정됨. " : "미설정. "}
+            코드를 바꾸면 Owner를 제외한 모든 멤버가 로그아웃되어 새 코드로 다시 입장해야 합니다.
+          </p>
+          <div className="row">
+            <input
+              type="password"
+              placeholder="새 입장 코드 (4자 이상)"
+              value={newJoinCode}
+              onChange={(e) => setNewJoinCode(e.target.value)}
+            />
+            <button
+              onClick={() =>
+                run(() => api.setJoinCode(serverId, newJoinCode), "입장 코드를 저장했습니다.").then(() =>
+                  setNewJoinCode("")
+                )
+              }
+              disabled={busy || newJoinCode.length < 4}
+            >
+              저장
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isOwner && pinHolders.length > 0 && (
+        <div className="card">
+          <h3>관리자 PIN 초기화</h3>
+          <p className="muted">PIN을 잊은 관리자용입니다. 초기화된 관리자가 다음에 입장할 때 새 PIN을 정합니다.</p>
+          <div className="row">
+            <select value={resetPinTarget} onChange={(e) => setResetPinTarget(e.target.value)}>
+              <option value="">대상 선택</option>
+              {pinHolders.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() =>
+                run(() => api.resetMemberPin(serverId, resetPinTarget), `${resetPinTarget}의 PIN을 초기화했습니다.`)
+              }
+              disabled={busy || !resetPinTarget}
+            >
+              초기화
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <h3>내 PIN 변경</h3>
+        <div className="row">
+          <input
+            type="password"
+            inputMode="numeric"
+            placeholder="현재 PIN"
+            value={currentPin}
+            onChange={(e) => setCurrentPin(e.target.value)}
+          />
+          <input
+            type="password"
+            inputMode="numeric"
+            placeholder="새 PIN (4자 이상)"
+            value={newPin}
+            onChange={(e) => setNewPin(e.target.value)}
+          />
+          <button
+            onClick={() =>
+              run(() => api.changeOwnPin(serverId, currentPin, newPin), "PIN을 변경했습니다.").then(() => {
+                setCurrentPin("");
+                setNewPin("");
+              })
+            }
+            disabled={busy || !currentPin || newPin.length < 4}
+          >
+            변경
+          </button>
+        </div>
+      </div>
+
+      {isOwner && admins.length > 0 && (
         <div className="card">
           <h3>Server Admin 강등</h3>
           <div className="row">
@@ -144,7 +260,7 @@ export default function AdminPage() {
             </select>
             <button
               onClick={() =>
-                run(() => api.demoteMember(serverId, actorName, demoteTarget), `${demoteTarget}을(를) 강등했습니다.`)
+                run(() => api.demoteMember(serverId, demoteTarget), `${demoteTarget}을(를) 강등했습니다.`)
               }
               disabled={busy || !demoteTarget}
             >
@@ -154,7 +270,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {others.length > 0 && (
+      {isOwner && others.length > 0 && (
         <div className="card">
           <h3>Owner 이전</h3>
           <div className="row">
@@ -169,7 +285,7 @@ export default function AdminPage() {
             <button
               onClick={() =>
                 run(
-                  () => api.transferOwnership(serverId, actorName, transferTarget),
+                  () => api.transferOwnership(serverId, transferTarget),
                   `${transferTarget}에게 Owner를 이전했습니다.`
                 )
               }
@@ -181,20 +297,22 @@ export default function AdminPage() {
         </div>
       )}
 
-      <div className="card">
-        <h3>현재 시즌 라벨</h3>
-        <div className="row">
-          <input value={seasonLabel} onChange={(e) => setSeasonLabel(e.target.value)} />
-          <button
-            onClick={() => run(() => api.updateSeasonLabel(serverId, actorName, seasonLabel), "시즌 라벨을 저장했습니다.")}
-            disabled={busy}
-          >
-            저장
-          </button>
+      {isOwner && (
+        <div className="card">
+          <h3>현재 시즌 라벨</h3>
+          <div className="row">
+            <input value={seasonLabel} onChange={(e) => setSeasonLabel(e.target.value)} />
+            <button
+              onClick={() => run(() => api.updateSeasonLabel(serverId, seasonLabel), "시즌 라벨을 저장했습니다.")}
+              disabled={busy}
+            >
+              저장
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
-      {norm && hard && (
+      {isOwner && norm && hard && (
         <div className="card">
           <h3>밸런스 계산 설정</h3>
           <p className="muted">기본값은 이 앱의 Rating 스케일에 맞춰져 있습니다. 필요할 때만 조정하세요.</p>
@@ -250,7 +368,7 @@ export default function AdminPage() {
           <div className="row" style={{ marginTop: 12 }}>
             <button
               onClick={() =>
-                run(() => api.updateBalanceConfig(serverId, actorName, norm, hard), "밸런스 설정을 저장했습니다.")
+                run(() => api.updateBalanceConfig(serverId, norm, hard), "밸런스 설정을 저장했습니다.")
               }
               disabled={busy}
             >
@@ -260,7 +378,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {constraints.length > 0 && (
+      {isOwner && constraints.length > 0 && (
         <div className="card">
           <h3>Constraint 우선순위</h3>
           {constraints.map((c) => (
@@ -282,7 +400,7 @@ export default function AdminPage() {
           <button
             onClick={() =>
               run(
-                () => api.updateConstraintPriorities(serverId, actorName, priorities),
+                () => api.updateConstraintPriorities(serverId, priorities),
                 "Constraint 우선순위를 저장했습니다."
               )
             }

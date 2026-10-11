@@ -11,7 +11,7 @@ from app.models.server_membership import ServerMembership
 from app.models.vote import Vote
 from app.services.vote_service import VoteService
 
-router = APIRouter(prefix="/servers/{server_id}/matches/{match_id}/votes", tags=["votes"])
+router = APIRouter(prefix="/servers/{server_id}/matches/{match_id}/votes", tags=["votes"], dependencies=[Depends(get_actor)])
 
 
 class CastVoteRequest(BaseModel):

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from typing import Iterator
+from typing import Iterator, Optional
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header
 from sqlalchemy.orm import Session
 
+from app.auth import read_token
 from app.database.base import SessionLocal
 from app.models.server_membership import ServerMembership
 from app.services.server_service import ServerService
+from app.utils.exceptions import AuthenticationError
 
 
 def get_db() -> Iterator[Session]:
@@ -27,17 +29,25 @@ def get_db() -> Iterator[Session]:
         session.close()
 
 
-def get_actor(
-    server_id: int,
-    x_actor_name: str = Header(..., alias="X-Actor-Name"),
+def get_member(
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> ServerMembership:
-    """Resolves the acting identity's Role server-side from its
-    ServerMembership row - never trusts a client-supplied role. Same
-    "pick a name" identity model as the Streamlit UI's actor picker
-    (see DEPLOY.md): X-Actor-Name is just a display name, not a login
-    credential."""
-    member = ServerService(db).get_member(server_id, x_actor_name)
-    if member is None:
-        raise HTTPException(status_code=404, detail=f"'{x_actor_name}' is not a member of this server")
+    """Any logged-in member of any server - for endpoints that aren't
+    server-scoped (OCR) but still cost money per call, so a stranger
+    without a token can't hit them. The identity comes only from the
+    signed token issued by POST /servers/{id}/session (see app/auth.py),
+    never from a client-supplied name, and its Role is re-read from the
+    DB on every request."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise AuthenticationError("입장이 필요합니다")
+    claims = read_token(authorization.removeprefix("Bearer ").strip())
+    return ServerService(db).resolve_token(claims)
+
+
+def get_actor(server_id: int, member: ServerMembership = Depends(get_member)) -> ServerMembership:
+    """A logged-in member of *this* server (the {server_id} path param) -
+    a token for one server never opens another."""
+    if member.server_id != server_id:
+        raise AuthenticationError("이 서버에 입장한 상태가 아닙니다")
     return member

@@ -90,7 +90,7 @@ export default function PlayersPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.createPlayer(serverId, actorName, {
+      await api.createPlayer(serverId, {
         nickname,
         tier,
         division,
@@ -114,9 +114,9 @@ export default function PlayersPage() {
     setError(null);
     try {
       if (player.is_active) {
-        await api.deactivatePlayer(serverId, actorName, player.id);
+        await api.deactivatePlayer(serverId, player.id);
       } else {
-        await api.reactivatePlayer(serverId, actorName, player.id);
+        await api.reactivatePlayer(serverId, player.id);
       }
       refresh();
     } catch (e) {
@@ -149,7 +149,7 @@ export default function PlayersPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.registerPlayer(serverId, actorName, {
+      await api.registerPlayer(serverId, {
         nickname: riotNickname,
         puuid: probePuuid,
         main_role: riotMainRole,
@@ -201,7 +201,7 @@ export default function PlayersPage() {
         try {
           const { puuid, current } = await api.probeCurrentSeason(serverId, row.game_name, row.tag_line);
           const rec = await api.inferPositionByPuuid(serverId, puuid);
-          await api.registerPlayer(serverId, actorName, {
+          await api.registerPlayer(serverId, {
             nickname: row.nickname,
             puuid,
             main_role: rec?.main ?? "MID",
@@ -241,7 +241,7 @@ export default function PlayersPage() {
       // would silently clobber the seed_rating this just set.
       let base = editDraft;
       if (editDraft.tier === "UNRANKED") {
-        const afterSeed = await api.setSeedRating(serverId, actorName, editTarget.id, editSeedTier, "III");
+        const afterSeed = await api.setSeedRating(serverId, editTarget.id, editSeedTier, "III");
         base = {
           ...afterSeed,
           division: editDraft.division,
@@ -250,9 +250,9 @@ export default function PlayersPage() {
           sub_role: editDraft.sub_role,
         };
       }
-      await api.updatePlayer(serverId, actorName, base);
+      await api.updatePlayer(serverId, base);
       if (editDraft.internal_rating !== editTarget.internal_rating) {
-        await api.overrideInternalRating(serverId, actorName, editTarget.id, editDraft.internal_rating);
+        await api.overrideInternalRating(serverId, editTarget.id, editDraft.internal_rating);
       }
       setEditTarget(null);
       setEditDraft(null);
@@ -269,7 +269,7 @@ export default function PlayersPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.refreshPlayerFromRiot(serverId, actorName, playerId);
+      await api.refreshPlayerFromRiot(serverId, playerId);
       refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));

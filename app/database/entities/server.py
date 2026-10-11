@@ -33,3 +33,6 @@ class ServerEntity(Base):
     # form ships yet (backend-ready, matching SearchPolicy's unexercised
     # hooks) - this column exists so a future one needs no schema change.
     constraint_priorities: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    # NULL = no entry code set yet (anyone can enter - the 서버 관리 page
+    # warns the Owner until one is set). PBKDF2 hash, see app/auth.py.
+    join_code_hash: Mapped[Optional[str]] = mapped_column(nullable=True, default=None)

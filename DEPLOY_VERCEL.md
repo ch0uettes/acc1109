@@ -32,6 +32,13 @@ acc1109/                 (저장소 루트)
    | `CORS_ALLOWED_ORIGINS` | 프론트엔드 프로젝트의 배포 URL (예: `https://your-frontend.vercel.app`) | 콤마로 여러 개 가능 |
    | `RIOT_API_KEY` | (선택) Riot 개발자 키 | 아래 "알려진 제약" 참고 |
    | `CURRENT_SEASON_LABEL` | (선택) 예: `2025-S2` | |
+   | `SESSION_SECRET` | **필수.** 충분히 긴 무작위 문자열 (아래 명령으로 생성) | 접속 토큰 서명 키. 미설정 시 로그인 자체가 막힙니다. 바꾸면 전원 로그아웃됩니다 |
+   | `SERVER_CREATION_CODE` | (선택) 새 서버를 만들 때 필요한 코드 | **미설정 시 Vercel에서는 새 서버 생성이 비활성화됩니다** - 외부인이 자기 서버를 만들어 OCR 등 유료 API를 쓰는 걸 막기 위함 |
+
+   `SESSION_SECRET` 값 생성:
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
 4. Deploy. 완료되면 `https://<백엔드 프로젝트>.vercel.app`이 API 베이스 URL입니다
    (`/health`로 확인 가능).
 
@@ -45,7 +52,32 @@ acc1109/                 (저장소 루트)
    | `NEXT_PUBLIC_API_BASE_URL` | 1단계에서 나온 백엔드 프로젝트 URL |
 4. Deploy.
 
+## 3. 입장 코드 / 관리자 PIN 도입 후 최초 1회 작업
+
+모든 서버 API는 이제 접속 토큰이 있어야 호출됩니다. 토큰은 **서버 입장 코드**(전원)와
+**개인 PIN**(Owner/Server Admin만)을 확인한 뒤 발급됩니다.
+
+1. 운영 DB에 컬럼 추가 (재실행해도 안전):
+   ```bash
+   python scripts/migrate_2026_access_codes.py "<DATABASE_URL>"
+   ```
+2. 백엔드에 `SESSION_SECRET`을 설정하고 재배포합니다.
+3. **배포 직후 Owner가 가장 먼저 입장**해서 PIN을 정합니다. 기존 관리자는 PIN이 없어서,
+   처음 입장하는 사람이 입력한 PIN이 그대로 설정되기 때문입니다.
+4. 서버 관리 → **입장 코드**를 설정하고, 멤버들에게 공유합니다. 설정 전까지는 코드 없이
+   누구나 입장할 수 있습니다 (서버 관리 페이지에 경고가 뜹니다).
+5. 다른 Server Admin들에게도 바로 입장해서 PIN을 정하라고 알립니다.
+
+- 관리자가 PIN을 잊으면: Owner가 서버 관리 → 관리자 PIN 초기화
+- Owner가 PIN을 잊으면: `python scripts/reset_member_pin.py <server_id> "<이름>" "<DATABASE_URL>"`
+  실행 후 바로 다시 입장해서 새 PIN을 정합니다.
+
 ## 알려진 제약 / 후속 작업
+
+- **일반 참가자끼리는 이름 사칭이 가능함**: 입장 코드를 아는 멤버는 다른 일반 참가자의
+  이름으로 입장할 수 있습니다 (관리자 이름은 PIN 때문에 불가). 일반 참가자 권한은
+  MVP 투표 정도라 영향이 작지만, 투표 조작이 문제가 되면 일반 참가자에게도 PIN을
+  적용해야 합니다.
 
 - **Riot API 키 임시 갱신 UX가 사라짐**: 기존 Streamlit 사이드바의 "새 키 붙여넣기"는
   같은 프로세스가 계속 떠 있다는 전제(in-memory override)로 동작했는데, 서버리스

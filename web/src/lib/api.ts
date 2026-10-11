@@ -1,3 +1,5 @@
+import { clearSession, readToken } from "./session";
+
 // Thin typed client over the FastAPI backend (app/api/*). Mirrors the
 // pydantic domain models field-for-field rather than redefining a
 // separate DTO shape, since the backend already serializes them as-is.
@@ -73,6 +75,7 @@ export interface Server {
   hard_constraint_config: HardConstraintConfig;
   current_season_label: string;
   constraint_priorities: Record<string, number>;
+  has_join_code: boolean;
 }
 
 export interface ConstraintInfo {
@@ -124,6 +127,12 @@ export interface ServerMembership {
   discord_id: string | null;
   role: Role;
   created_at: string;
+  has_pin: boolean;
+}
+
+export interface SessionResponse {
+  token: string;
+  member: ServerMembership;
 }
 
 export interface RolePreference {
@@ -250,46 +259,75 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(
-  path: string,
-  options: { method?: string; body?: unknown; actorName?: string } = {}
-): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (options.actorName) headers["X-Actor-Name"] = options.actorName;
+// Every call carries the login token (see lib/session.ts) when there is
+// one. A 401 on a call that sent a token means it was revoked or expired
+// (entry code changed, PIN reset, ...) - drop it and send the user back
+// to the entry screen rather than leaving every page erroring.
+async function send(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = readToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: options.method ?? "GET",
-    headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    cache: "no-store",
-  });
+  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers, cache: "no-store" });
 
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    if (res.status === 401 && token) {
+      clearSession();
+      if (window.location.pathname !== "/") window.location.href = "/";
+    }
     throw new ApiError(res.status, detail.detail ?? res.statusText);
   }
+  return res;
+}
+
+async function request<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+  const res = await send(path, {
+    method: options.method ?? "GET",
+    headers: { "Content-Type": "application/json" },
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+  });
   if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  const res = await send(path, { method: "POST", body: form });
   return res.json() as Promise<T>;
 }
 
 export const api = {
   listServers: () => request<Server[]>("/servers"),
-  createServer: (name: string, ownerDisplayName: string) =>
-    request<Server>("/servers", {
+  createServer: (payload: {
+    name: string;
+    owner_display_name: string;
+    join_code: string;
+    owner_pin: string;
+    creation_code?: string;
+  }) => request<SessionResponse>("/servers", { method: "POST", body: payload }),
+  login: (serverId: number, displayName: string, joinCode: string, pin?: string) =>
+    request<SessionResponse>(`/servers/${serverId}/session`, {
       method: "POST",
-      body: { name, owner_display_name: ownerDisplayName },
+      body: { display_name: displayName, join_code: joinCode, pin: pin || null },
     }),
-  joinServer: (serverId: number, displayName: string) =>
-    request<ServerMembership>(`/servers/${serverId}/members`, {
+  me: (serverId: number) => request<ServerMembership>(`/servers/${serverId}/me`),
+  changeOwnPin: (serverId: number, currentPin: string, newPin: string) =>
+    request<SessionResponse>(`/servers/${serverId}/me/pin`, {
+      method: "PUT",
+      body: { current_pin: currentPin, new_pin: newPin },
+    }),
+  setJoinCode: (serverId: number, joinCode: string) =>
+    request<SessionResponse>(`/servers/${serverId}/join-code`, { method: "PUT", body: { join_code: joinCode } }),
+  resetMemberPin: (serverId: number, targetDisplayName: string) =>
+    request<ServerMembership>(`/servers/${serverId}/members/reset-pin`, {
       method: "POST",
-      body: { display_name: displayName },
+      body: { target_display_name: targetDisplayName },
     }),
 
   listPlayers: (serverId: number, includeInactive = false) =>
     request<Player[]>(`/servers/${serverId}/players?include_inactive=${includeInactive}`),
   createPlayer: (
     serverId: number,
-    actorName: string,
     payload: {
       nickname: string;
       tier: Tier;
@@ -298,20 +336,17 @@ export const api = {
       main_role: Position;
       sub_role?: Position | null;
     }
-  ) => request<Player>(`/servers/${serverId}/players`, { method: "POST", body: payload, actorName }),
-  deactivatePlayer: (serverId: number, actorName: string, playerId: number) =>
+  ) => request<Player>(`/servers/${serverId}/players`, { method: "POST", body: payload }),
+  deactivatePlayer: (serverId: number, playerId: number) =>
     request<Player>(`/servers/${serverId}/players/${playerId}/deactivate`, {
       method: "POST",
-      actorName,
     }),
-  reactivatePlayer: (serverId: number, actorName: string, playerId: number) =>
+  reactivatePlayer: (serverId: number, playerId: number) =>
     request<Player>(`/servers/${serverId}/players/${playerId}/reactivate`, {
       method: "POST",
-      actorName,
     }),
   setSeedRating: (
     serverId: number,
-    actorName: string,
     playerId: number,
     seedTier: Tier,
     seedDivision: Division = "III"
@@ -319,11 +354,9 @@ export const api = {
     request<Player>(`/servers/${serverId}/players/${playerId}/seed-rating`, {
       method: "POST",
       body: { seed_tier: seedTier, seed_division: seedDivision },
-      actorName,
     }),
   overrideInternalRating: (
     serverId: number,
-    actorName: string,
     playerId: number,
     newInternalRating: number,
     reason?: string
@@ -331,16 +364,14 @@ export const api = {
     request<Player>(`/servers/${serverId}/players/${playerId}/internal-rating`, {
       method: "POST",
       body: { new_internal_rating: newInternalRating, reason },
-      actorName,
     }),
-  updatePlayer: (serverId: number, actorName: string, player: Player) =>
+  updatePlayer: (serverId: number, player: Player) =>
     request<Player>(`/servers/${serverId}/players/${player.id}`, {
       method: "PUT",
       body: player,
-      actorName,
     }),
-  refreshPlayerFromRiot: (serverId: number, actorName: string, playerId: number) =>
-    request<Player>(`/servers/${serverId}/players/${playerId}/refresh`, { method: "POST", actorName }),
+  refreshPlayerFromRiot: (serverId: number, playerId: number) =>
+    request<Player>(`/servers/${serverId}/players/${playerId}/refresh`, { method: "POST" }),
   probeCurrentSeason: (serverId: number, gameName: string, tagLine: string) =>
     request<{ puuid: string; current: TierSnapshot | null }>(`/servers/${serverId}/players/probe`, {
       method: "POST",
@@ -366,7 +397,6 @@ export const api = {
   },
   registerPlayer: (
     serverId: number,
-    actorName: string,
     payload: {
       nickname: string;
       puuid: string;
@@ -380,26 +410,16 @@ export const api = {
       recommendation?: RoleRecommendation | null;
       reason?: string | null;
     }
-  ) => request<Player>(`/servers/${serverId}/players/register`, { method: "POST", body: payload, actorName }),
-  extractRiotIds: async (file: File): Promise<OCRRiotIdRow[]> => {
+  ) => request<Player>(`/servers/${serverId}/players/register`, { method: "POST", body: payload }),
+  extractRiotIds: (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${BASE_URL}/ocr/riot-ids`, { method: "POST", body: form });
-    if (!res.ok) {
-      const detail = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new ApiError(res.status, detail.detail ?? res.statusText);
-    }
-    return res.json();
+    return upload<OCRRiotIdRow[]>("/ocr/riot-ids", form);
   },
-  parseRosterFile: async (serverId: number, file: File): Promise<OCRRiotIdRow[]> => {
+  parseRosterFile: (serverId: number, file: File) => {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${BASE_URL}/servers/${serverId}/players/roster-file`, { method: "POST", body: form });
-    if (!res.ok) {
-      const detail = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new ApiError(res.status, detail.detail ?? res.statusText);
-    }
-    return res.json();
+    return upload<OCRRiotIdRow[]>(`/servers/${serverId}/players/roster-file`, form);
   },
 
   generateTeams: (
@@ -413,24 +433,30 @@ export const api = {
   ) => request<GenerateTeamsResponse>(`/servers/${serverId}/teams/generate`, { method: "POST", body: payload }),
   saveTeams: (
     serverId: number,
-    actorName: string,
     payload: { teams: Team[]; decision_log_draft?: unknown; chosen_rank?: number; reason?: string | null }
   ) =>
     request<number[]>(`/servers/${serverId}/teams/save`, {
       method: "POST",
       body: payload,
-      actorName,
     }),
   listSavedRuns: (serverId: number, limit = 20) =>
     request<string[]>(`/servers/${serverId}/teams/runs?limit=${limit}`),
   loadSavedRun: (serverId: number, generatedAt: string) =>
     request<SavedTeam[]>(`/servers/${serverId}/teams/runs/${encodeURIComponent(generatedAt)}`),
-  savedRunExportUrl: (serverId: number, generatedAt: string, format: "txt" | "xlsx") =>
-    `${BASE_URL}/servers/${serverId}/teams/runs/${encodeURIComponent(generatedAt)}/export.${format}`,
+  downloadSavedRun: async (serverId: number, generatedAt: string, format: "txt" | "xlsx") => {
+    const res = await send(
+      `/servers/${serverId}/teams/runs/${encodeURIComponent(generatedAt)}/export.${format}`
+    );
+    const url = URL.createObjectURL(await res.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `team_${generatedAt}.${format}`;
+    link.click();
+    URL.revokeObjectURL(url);
+  },
 
   recordMatch: (
     serverId: number,
-    actorName: string,
     payload: {
       teams: Team[];
       winning_team_index: number;
@@ -440,55 +466,39 @@ export const api = {
         { kills: number; deaths: number; assists: number; cs: number; gold: number; damage: number; vision_score: number }
       >;
     }
-  ) => request<Match>(`/servers/${serverId}/matches`, { method: "POST", body: payload, actorName }),
+  ) => request<Match>(`/servers/${serverId}/matches`, { method: "POST", body: payload }),
 
-  extractMatchResult: async (
-    serverId: number,
-    file: File,
-    knownNicknames: string[]
-  ): Promise<MatchResultData> => {
+  extractMatchResult: (serverId: number, file: File, knownNicknames: string[]) => {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(
-      `${BASE_URL}/ocr/match-result?known_nicknames=${encodeURIComponent(knownNicknames.join(","))}`,
-      { method: "POST", body: form }
+    return upload<MatchResultData>(
+      `/ocr/match-result?known_nicknames=${encodeURIComponent(knownNicknames.join(","))}`,
+      form
     );
-    if (!res.ok) {
-      const detail = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new ApiError(res.status, detail.detail ?? res.statusText);
-    }
-    return res.json();
   },
 
-  mergeDetailStats: async (
-    file: File,
-    participants: OCRPlayerRow[]
-  ): Promise<{ participants: OCRPlayerRow[]; matched_count: number; ambiguous_names: string[] }> => {
+  mergeDetailStats: (file: File, participants: OCRPlayerRow[]) => {
     const form = new FormData();
     form.append("file", file);
     form.append("participants", JSON.stringify(participants));
-    const res = await fetch(`${BASE_URL}/ocr/detail-stats/merge`, { method: "POST", body: form });
-    if (!res.ok) {
-      const detail = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new ApiError(res.status, detail.detail ?? res.statusText);
-    }
-    return res.json();
+    return upload<{ participants: OCRPlayerRow[]; matched_count: number; ambiguous_names: string[] }>(
+      "/ocr/detail-stats/merge",
+      form
+    );
   },
 
   listPendingVotes: (serverId: number) => request<Match[]>(`/servers/${serverId}/matches/pending-votes`),
-  castVote: (serverId: number, actorName: string, matchId: number, voterPlayerId: number, votedPlayerId: number) =>
+  castVote: (serverId: number, matchId: number, voterPlayerId: number, votedPlayerId: number) =>
     request(`/servers/${serverId}/matches/${matchId}/votes`, {
       method: "POST",
       body: { voter_player_id: voterPlayerId, voted_player_id: votedPlayerId },
-      actorName,
     }),
   tallyVote: (serverId: number, matchId: number) =>
     request<number | null>(`/servers/${serverId}/matches/${matchId}/votes/tally`),
-  setUserMvp: (serverId: number, actorName: string, matchId: number, playerId: number) =>
+  setUserMvp: (serverId: number, matchId: number, playerId: number) =>
     request<void>(`/servers/${serverId}/matches/${matchId}/user-mvp`, {
       method: "POST",
       body: { player_id: playerId },
-      actorName,
     }),
 
   leaderboard: (serverId: number) => request<Player[]>(`/servers/${serverId}/stats/leaderboard`),
@@ -505,41 +515,40 @@ export const api = {
     return found;
   },
   listMembers: (serverId: number) => request<ServerMembership[]>(`/servers/${serverId}/members`),
-  promoteMember: (serverId: number, actorDisplayName: string, targetDisplayName: string, reason?: string) =>
+  promoteMember: (serverId: number, targetDisplayName: string, reason?: string) =>
     request<ServerMembership>(`/servers/${serverId}/members/promote`, {
       method: "POST",
-      body: { actor_display_name: actorDisplayName, target_display_name: targetDisplayName, reason },
+      body: { target_display_name: targetDisplayName, reason },
     }),
-  demoteMember: (serverId: number, actorDisplayName: string, targetDisplayName: string, reason?: string) =>
+  demoteMember: (serverId: number, targetDisplayName: string, reason?: string) =>
     request<ServerMembership>(`/servers/${serverId}/members/demote`, {
       method: "POST",
-      body: { actor_display_name: actorDisplayName, target_display_name: targetDisplayName, reason },
+      body: { target_display_name: targetDisplayName, reason },
     }),
-  transferOwnership: (serverId: number, actorDisplayName: string, targetDisplayName: string, reason?: string) =>
+  transferOwnership: (serverId: number, targetDisplayName: string, reason?: string) =>
     request<ServerMembership>(`/servers/${serverId}/members/transfer-ownership`, {
       method: "POST",
-      body: { actor_display_name: actorDisplayName, target_display_name: targetDisplayName, reason },
+      body: { target_display_name: targetDisplayName, reason },
     }),
   roleChangeHistory: (serverId: number) => request<RoleChange[]>(`/servers/${serverId}/role-changes`),
-  updateSeasonLabel: (serverId: number, actorDisplayName: string, label: string) =>
+  updateSeasonLabel: (serverId: number, label: string) =>
     request<Server>(`/servers/${serverId}/season-label`, {
       method: "PUT",
-      body: { actor_display_name: actorDisplayName, label },
+      body: { label },
     }),
   updateBalanceConfig: (
     serverId: number,
-    actorDisplayName: string,
     normalization: NormalizationConfig,
     hardConstraint: HardConstraintConfig
   ) =>
     request<Server>(`/servers/${serverId}/balance-config`, {
       method: "PUT",
-      body: { actor_display_name: actorDisplayName, normalization, hard_constraint: hardConstraint },
+      body: { normalization, hard_constraint: hardConstraint },
     }),
   listConstraints: (serverId: number) => request<ConstraintInfo[]>(`/servers/${serverId}/constraints`),
-  updateConstraintPriorities: (serverId: number, actorDisplayName: string, priorities: Record<string, number>) =>
+  updateConstraintPriorities: (serverId: number, priorities: Record<string, number>) =>
     request<Server>(`/servers/${serverId}/constraint-priorities`, {
       method: "PUT",
-      body: { actor_display_name: actorDisplayName, priorities },
+      body: { priorities },
     }),
 };

@@ -3,14 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_actor, get_db
 from app.models.decision_log import DecisionLogEntry
 from app.models.match import Match
 from app.models.player import Player
 from app.services.stats_service import StatsService
 from app.services.team_service import TeamService
 
-router = APIRouter(prefix="/servers/{server_id}/stats", tags=["stats"])
+router = APIRouter(prefix="/servers/{server_id}/stats", tags=["stats"], dependencies=[Depends(get_actor)])
 
 
 @router.get("/leaderboard", response_model=list[Player])

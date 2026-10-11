@@ -13,7 +13,7 @@ from app.models.server_membership import ServerMembership
 from app.models.team import Team
 from app.services.match_service import MatchService
 
-router = APIRouter(prefix="/servers/{server_id}/matches", tags=["matches"])
+router = APIRouter(prefix="/servers/{server_id}/matches", tags=["matches"], dependencies=[Depends(get_actor)])
 
 
 class PlayerStats(BaseModel):

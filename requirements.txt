@@ -9,6 +9,7 @@ numpy
 pandas
 openpyxl
 pytest
+httpx2
 requests
 Pillow
 pytesseract

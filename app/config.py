@@ -17,6 +17,8 @@ class Settings:
     riot_region: str
     current_season_label: str
     google_vision_api_key: Optional[str]
+    session_secret: Optional[str]
+    server_creation_code: Optional[str]
 
 
 def _build_settings() -> Settings:
@@ -55,6 +57,14 @@ def _build_settings() -> Settings:
         # OCR falls back to Tesseract (or NotImplemented if that's missing
         # too, e.g. on Vercel where the system binary can't be installed).
         google_vision_api_key=os.environ.get("GOOGLE_VISION_API_KEY"),
+        # Signs API access tokens (see app/auth.py) - required on Vercel,
+        # where an unset value disables login rather than falling back to
+        # a guessable dev key.
+        session_secret=os.environ.get("SESSION_SECRET"),
+        # Gates POST /servers so a stranger can't create their own server
+        # just to get a token for the cost-bearing OCR/Riot endpoints.
+        # Unset = creation open locally, disabled on Vercel.
+        server_creation_code=os.environ.get("SERVER_CREATION_CODE"),
     )
 
 

@@ -52,3 +52,6 @@ class Server(BaseModel):
     hard_constraint_config: HardConstraintConfig = Field(default=DEFAULT_HARD_CONSTRAINT_CONFIG)
     current_season_label: str = Field(default_factory=lambda: settings.current_season_label)
     constraint_priorities: dict[str, int] = Field(default_factory=dict)
+    # Whether an entry code is set - the hash itself never leaves
+    # ServerRepository.
+    has_join_code: bool = False

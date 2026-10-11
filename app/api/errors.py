@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.utils.exceptions import (
     AppError,
+    AuthenticationError,
     DuplicateMembershipError,
     DuplicateServerError,
     DuplicateVoteError,
@@ -18,6 +19,7 @@ from app.utils.exceptions import (
 )
 
 _STATUS_BY_ERROR: dict[type[AppError], int] = {
+    AuthenticationError: 401,
     PermissionDeniedError: 403,
     PlayerNotFoundError: 404,
     MatchNotFoundError: 404,
