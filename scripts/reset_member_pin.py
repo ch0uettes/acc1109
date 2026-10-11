@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import create_engine, text  # noqa: E402
 
-from app.config import settings  # noqa: E402
+from app.config import pin_postgres_driver, settings  # noqa: E402
 
 
 def main() -> None:
@@ -24,6 +24,7 @@ def main() -> None:
         sys.exit(1)
     server_id, display_name = int(sys.argv[1]), sys.argv[2]
     database_url = sys.argv[3] if len(sys.argv) > 3 else settings.database_url
+    database_url = pin_postgres_driver(database_url)
     engine = create_engine(database_url)
 
     with engine.begin() as conn:
