@@ -18,4 +18,8 @@ class ServerMembershipEntity(Base):
     display_name: Mapped[str]
     discord_id: Mapped[Optional[str]] = mapped_column(nullable=True)
     role: Mapped[str]
+    # Only Owner/Server Admin logins check this. NULL = no PIN claimed
+    # yet - the next admin login under this name sets it. PBKDF2 hash,
+    # see app/auth.py.
+    pin_hash: Mapped[Optional[str]] = mapped_column(nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)

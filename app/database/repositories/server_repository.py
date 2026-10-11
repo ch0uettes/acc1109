@@ -54,6 +54,7 @@ def _to_domain(entity: ServerEntity) -> Server:
         hard_constraint_config=_hard_constraint_config_from_json(entity.hard_constraint_config),
         current_season_label=entity.current_season_label or settings.current_season_label,
         constraint_priorities=entity.constraint_priorities or {},
+        has_join_code=entity.join_code_hash is not None,
     )
 
 
@@ -94,6 +95,16 @@ class ServerRepository(BaseRepository[ServerEntity]):
     def update_season_label(self, server_id: int, label: str) -> Server:
         entity = self._require_entity(server_id)
         entity.current_season_label = label
+        self.session.commit()
+        self.session.refresh(entity)
+        return _to_domain(entity)
+
+    def get_join_code_hash(self, server_id: int) -> str | None:
+        return self._require_entity(server_id).join_code_hash
+
+    def set_join_code_hash(self, server_id: int, join_code_hash: str | None) -> Server:
+        entity = self._require_entity(server_id)
+        entity.join_code_hash = join_code_hash
         self.session.commit()
         self.session.refresh(entity)
         return _to_domain(entity)

@@ -16,10 +16,22 @@ PLAYERS_PER_TEAM = 5
 
 _KDA_PATTERN = re.compile(r"(\d+)\s*/\s*(\d+)\s*/\s*(\d+)")
 _GOLD_PATTERN = re.compile(r"\d{1,3}(?:,\d{3})+")
-# The scoreboard splits teams with an explicit "1번 팀" / "2번 팀" label row
-# (which also carries the *team's* aggregate KDA - easy to mistake for a
-# player row, so it's matched and skipped explicitly before anything else).
-_TEAM_HEADER_PATTERN = re.compile(r"\d+\s*번\s*팀")
+# The scoreboard splits teams with a team-number header row (which also
+# carries that *team's* aggregate KDA - easy to mistake for a player row,
+# so it's matched and skipped explicitly before anything else). Captures
+# the team number itself so the caller can use it directly instead of a
+# first-seen/not-first-seen toggle - see parse_rows_into_players.
+#
+# The real client text is "1 팀" / "2 팀" - no "번" - confirmed directly
+# against real screenshots via both Tesseract and Google Vision. The
+# previous pattern here required a literal "번" that never actually
+# appears in this client's UI text, so header rows were never recognized
+# at all: each one fell through to the KDA check below and got parsed as
+# an 11th phantom "player" (its own team-aggregate KDA matching
+# _KDA_PATTERN), which then threw off the positional 5-then-5 fallback
+# split for every row after it - observed directly as a real participant
+# (row 6, right after 5 legitimate rows) landing in the wrong team.
+_TEAM_HEADER_PATTERN = re.compile(r"(?:^|\s)(\d+)\s*번?\s*팀(?!\S)")
 
 # The detail/stat-comparison screenshot (CS, vision, damage, ...) has no
 # player names at all - just one column per player in the same left-to-right,
@@ -185,8 +197,9 @@ def parse_rows_into_players(
     for row in rows:
         text = _row_text(row)
 
-        if _TEAM_HEADER_PATTERN.search(text):
-            current_team = 1 if saw_team_header else 0
+        header_match = _TEAM_HEADER_PATTERN.search(text)
+        if header_match:
+            current_team = int(header_match.group(1)) - 1
             saw_team_header = True
             continue
 
@@ -337,3 +350,39 @@ def extract_detail_stats(rows: list[list[tuple[float, str]]]) -> dict[str, list]
     stats: dict[str, list] = {key: _extract_labeled_row_numbers(rows, label) for key, label in STAT_LABELS.items()}
     stats["kda"] = extract_kda_order(rows)
     return stats
+
+
+def match_detail_stats_by_kda(
+    participants: list[dict], detail_stats: dict[str, list]
+) -> tuple[int, list[str]]:
+    """Joins the detail (CS/vision/damage/gold) screenshot's columns back to
+    the main scoreboard's participants by K/D/A - the detail screenshot has
+    no names, and its column order isn't guaranteed to match the
+    scoreboard's row order (observed directly: one team's order matched,
+    the other team's didn't), so KDA is the most reliable join key
+    available. It is not a true identifier though: two participants can
+    genuinely share one (e.g. two 0/0/0 supports in a short game). Mutates
+    each *unambiguously* matched participant dict in place with its stats.
+    Returns (matched_count, ambiguous_names) - names sharing a KDA with at
+    least one other participant are deliberately left unmatched rather than
+    guessed, since silently assigning one player's stats to a different
+    player who happens to share their KDA would be wrong data with no
+    indication anything went wrong."""
+    by_kda: dict[tuple[int, int, int], list[dict]] = {}
+    for p in participants:
+        by_kda.setdefault((p["kills"], p["deaths"], p["assists"]), []).append(p)
+    ambiguous_names = [p["raw_name"] for group in by_kda.values() if len(group) > 1 for p in group]
+
+    kda_order = detail_stats.get("kda", [])
+    matched_count = 0
+    for i, kda in enumerate(kda_order):
+        candidates = by_kda.get(tuple(kda), [])
+        if len(candidates) != 1:
+            continue
+        target = candidates[0]
+        for stat_name in ("cs", "vision_score", "damage", "gold"):
+            values = detail_stats.get(stat_name, [])
+            if i < len(values):
+                target[stat_name] = values[i]
+        matched_count += 1
+    return matched_count, ambiguous_names

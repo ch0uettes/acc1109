@@ -8,3 +8,10 @@ venv/
 *.db
 .streamlit/secrets.toml
 .claude/
+
+# Next.js / Node
+node_modules/
+.next/
+.env.local
+.vercel/
+

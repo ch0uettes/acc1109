@@ -25,6 +25,7 @@ class Permission(str, Enum):
     TRANSFER_OWNERSHIP = "transfer_ownership"
     PROMOTE_TO_SERVER_ADMIN = "promote_to_server_admin"
     REMOVE_SERVER_ADMIN = "remove_server_admin"
+    RESET_MEMBER_PIN = "reset_member_pin"
     MANAGE_MODERATORS = "manage_moderators"  # reserved, Moderator role unimplemented
     MANAGE_PLAYERS = "manage_players"
     CREATE_MATCH = "create_match"
@@ -70,6 +71,7 @@ _OWNER_PERMISSIONS = _SERVER_ADMIN_PERMISSIONS | frozenset(
         Permission.MANAGE_DISCORD_LINK,
         Permission.TRANSFER_OWNERSHIP,
         Permission.REMOVE_SERVER_ADMIN,
+        Permission.RESET_MEMBER_PIN,
         Permission.MANAGE_MODERATORS,
     }
 )

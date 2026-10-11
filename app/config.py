@@ -16,12 +16,25 @@ class Settings:
     riot_platform: str
     riot_region: str
     current_season_label: str
+    google_vision_api_key: Optional[str]
+    session_secret: Optional[str]
+    server_creation_code: Optional[str]
 
 
 def _build_settings() -> Settings:
     base_dir = Path(__file__).resolve().parent.parent
-    data_dir = base_dir / "data"
-    data_dir.mkdir(exist_ok=True)
+    # Vercel's deployment bundle is read-only outside /tmp (and /tmp is
+    # wiped between cold starts) - `data/` isn't even in the bundle at all
+    # (gitignored), so mkdir()'ing it at the local-dev path would raise
+    # OSError on *every* cold start, before any request is served (this
+    # was observed directly: FUNCTION_INVOCATION_FAILED on literally every
+    # route, including /health, on a deploy with no DATABASE_URL set).
+    # DATABASE_URL should always be set to a real Postgres in production
+    # (see DEPLOY_VERCEL.md) - this fallback only keeps an unconfigured
+    # deploy from hard-crashing instead of degrading (non-persistent
+    # SQLite) until that's fixed.
+    data_dir = Path("/tmp/data") if os.environ.get("VERCEL") else base_dir / "data"
+    data_dir.mkdir(exist_ok=True, parents=True)
     db_path = data_dir / "app.db"
     # Local dev defaults to a SQLite file; deployed instances (e.g. Streamlit
     # Community Cloud, whose filesystem is wiped on every redeploy) set
@@ -40,6 +53,18 @@ def _build_settings() -> Settings:
         # starts. It only labels PlayerSeasonRank snapshots, nothing scores
         # off of it.
         current_season_label=os.environ.get("CURRENT_SEASON_LABEL", "2025-S2"),
+        # Optional - see app.ocr.extractor.build_ocr_extractor. Unset means
+        # OCR falls back to Tesseract (or NotImplemented if that's missing
+        # too, e.g. on Vercel where the system binary can't be installed).
+        google_vision_api_key=os.environ.get("GOOGLE_VISION_API_KEY"),
+        # Signs API access tokens (see app/auth.py) - required on Vercel,
+        # where an unset value disables login rather than falling back to
+        # a guessable dev key.
+        session_secret=os.environ.get("SESSION_SECRET"),
+        # Gates POST /servers so a stranger can't create their own server
+        # just to get a token for the cost-bearing OCR/Riot endpoints.
+        # Unset = creation open locally, disabled on Vercel.
+        server_creation_code=os.environ.get("SERVER_CREATION_CODE"),
     )
 
 

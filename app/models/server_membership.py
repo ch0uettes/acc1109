@@ -21,3 +21,6 @@ class ServerMembership(BaseModel):
     discord_id: Optional[str] = None
     role: Role
     created_at: datetime
+    # Whether an admin PIN is set - the hash itself never leaves
+    # ServerMembershipRepository.
+    has_pin: bool = False

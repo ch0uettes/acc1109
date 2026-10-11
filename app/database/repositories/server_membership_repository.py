@@ -16,6 +16,7 @@ def _to_domain(entity: ServerMembershipEntity) -> ServerMembership:
         discord_id=entity.discord_id,
         role=Role(entity.role),
         created_at=entity.created_at,
+        has_pin=entity.pin_hash is not None,
     )
 
 
@@ -54,6 +55,23 @@ class ServerMembershipRepository(BaseRepository[ServerMembershipEntity]):
             .one_or_none()
         )
         return _to_domain(entity) if entity else None
+
+    def get(self, membership_id: int) -> ServerMembership | None:
+        entity = self._get_entity(membership_id)
+        return _to_domain(entity) if entity else None
+
+    def get_pin_hash(self, membership_id: int) -> str | None:
+        entity = self._get_entity(membership_id)
+        return entity.pin_hash if entity else None
+
+    def set_pin_hash(self, membership_id: int, pin_hash: str | None) -> ServerMembership:
+        entity = self._get_entity(membership_id)
+        if entity is None:
+            raise ValueError(f"ServerMembership {membership_id} not found")
+        entity.pin_hash = pin_hash
+        self.session.commit()
+        self.session.refresh(entity)
+        return _to_domain(entity)
 
     def update_role(self, membership_id: int, role: Role) -> ServerMembership:
         entity = self._get_entity(membership_id)

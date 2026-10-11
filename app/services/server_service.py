@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth import TokenClaims, fingerprint, hash_secret, verify_secret
 from app.balance.config import HardConstraintConfig, NormalizationConfig
 from app.database.repositories.role_change_repository import RoleChangeRepository
 from app.database.repositories.server_membership_repository import ServerMembershipRepository
@@ -14,11 +15,35 @@ from app.models.server import Server
 from app.models.server_membership import ServerMembership
 from app.services.rbac import Permission, require_permission
 from app.utils.enums import Role
-from app.utils.exceptions import AppError, DuplicateMembershipError, DuplicateServerError
+from app.utils.exceptions import (
+    AppError,
+    AuthenticationError,
+    DuplicateMembershipError,
+    DuplicateServerError,
+    PermissionDeniedError,
+)
 
 
 class MembershipNotFoundError(AppError):
     pass
+
+
+class InvalidSecretError(AppError):
+    pass
+
+
+# Roles whose login needs a personal PIN on top of the server entry code -
+# a plain Player only needs the entry code, so another member typing a
+# Player's name can at most act as that Player, never as an admin.
+PIN_REQUIRED_ROLES = frozenset({Role.OWNER, Role.SERVER_ADMIN})
+MIN_SECRET_LENGTH = 4
+
+
+def _validate_secret(raw: str | None, label: str) -> str:
+    raw = (raw or "").strip()
+    if len(raw) < MIN_SECRET_LENGTH:
+        raise InvalidSecretError(f"{label}는 {MIN_SECRET_LENGTH}자 이상이어야 합니다")
+    return raw
 
 
 class ServerService:
@@ -33,9 +58,22 @@ class ServerService:
         self.membership_repo = ServerMembershipRepository(session)
         self.role_change_repo = RoleChangeRepository(session)
 
-    def create_server(self, name: str, owner_display_name: str, discord_guild_id: str | None = None) -> Server:
+    def create_server(
+        self,
+        name: str,
+        owner_display_name: str,
+        discord_guild_id: str | None = None,
+        join_code: str | None = None,
+        owner_pin: str | None = None,
+    ) -> Server:
         """The user who creates a Server automatically becomes its Owner -
-        every Server has exactly one at all times."""
+        every Server has exactly one at all times. The API always passes
+        join_code/owner_pin; they're optional here only so the Streamlit
+        UI (no login concept) keeps working."""
+        if join_code is not None:
+            join_code = _validate_secret(join_code, "입장 코드")
+        if owner_pin is not None:
+            owner_pin = _validate_secret(owner_pin, "PIN")
         try:
             server = self.server_repo.add(
                 Server(name=name, discord_guild_id=discord_guild_id, created_at=datetime.utcnow())
@@ -54,6 +92,10 @@ class ServerService:
             )
         )
         self._log_role_change(server.id, owner, old_role=None, new_role=Role.OWNER, changed_by=owner_display_name, reason="서버 생성")
+        if owner_pin is not None:
+            self.membership_repo.set_pin_hash(owner.id, hash_secret(owner_pin))
+        if join_code is not None:
+            server = self.server_repo.set_join_code_hash(server.id, hash_secret(join_code))
         return server
 
     def list_servers(self) -> list[Server]:
@@ -176,6 +218,87 @@ class ServerService:
         actor = self._require_member(server_id, actor_display_name)
         require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
         return self.server_repo.update_constraint_priorities(server_id, priorities)
+
+    def authenticate(
+        self, server_id: int, display_name: str, join_code: str | None, pin: str | None = None
+    ) -> tuple[ServerMembership, TokenClaims]:
+        """Login: entry code for everyone, plus a PIN for Owner/Server
+        Admin. An admin with no PIN yet (pre-existing row, or just
+        promoted) claims one with this login - the Owner should therefore
+        log in first right after this ships, before anyone else can type
+        their name. A name with no membership yet self-registers as a
+        Player, same as before, but only once the entry code checks out."""
+        if self.server_repo.get(server_id) is None:
+            raise AuthenticationError("존재하지 않는 서버입니다")
+        code_hash = self.server_repo.get_join_code_hash(server_id)
+        if code_hash is not None and not verify_secret((join_code or "").strip(), code_hash):
+            raise AuthenticationError("입장 코드가 올바르지 않습니다")
+
+        display_name = display_name.strip()
+        if not display_name:
+            raise AuthenticationError("이름을 입력해주세요")
+        member = self.add_player_member(server_id, display_name)
+
+        if member.role in PIN_REQUIRED_ROLES:
+            pin_hash = self.membership_repo.get_pin_hash(member.id)
+            if not pin:
+                raise AuthenticationError("관리자 계정은 PIN이 필요합니다")
+            if pin_hash is None:
+                member = self.membership_repo.set_pin_hash(member.id, hash_secret(_validate_secret(pin, "PIN")))
+            elif not verify_secret(pin.strip(), pin_hash):
+                raise AuthenticationError("PIN이 올바르지 않습니다")
+
+        return member, self.claims_for(member)
+
+    def claims_for(self, member: ServerMembership) -> TokenClaims:
+        return TokenClaims(
+            server_id=member.server_id,
+            member_id=member.id,
+            code_fingerprint=fingerprint(self.server_repo.get_join_code_hash(member.server_id)),
+            pin_fingerprint=fingerprint(self.membership_repo.get_pin_hash(member.id)),
+        )
+
+    def resolve_token(self, claims: TokenClaims) -> ServerMembership:
+        """Re-validates a token against current DB state on every request:
+        the Role always comes fresh from the DB (a demotion takes effect
+        immediately), and a changed entry code or PIN invalidates the
+        token. A Player promoted after logging in must log in again to
+        claim a PIN before their token carries admin rights."""
+        member = self.membership_repo.get(claims.member_id)
+        if member is None or member.server_id != claims.server_id:
+            raise AuthenticationError("멤버 정보를 찾을 수 없습니다. 다시 입장해주세요")
+        if fingerprint(self.server_repo.get_join_code_hash(member.server_id)) != claims.code_fingerprint:
+            raise AuthenticationError("입장 코드가 변경되었습니다. 다시 입장해주세요")
+        pin_hash = self.membership_repo.get_pin_hash(member.id)
+        if fingerprint(pin_hash) != claims.pin_fingerprint:
+            raise AuthenticationError("PIN이 변경되었습니다. 다시 입장해주세요")
+        if member.role in PIN_REQUIRED_ROLES and pin_hash is None:
+            raise AuthenticationError("관리자 권한이 부여되어 PIN 설정이 필요합니다. 다시 입장해주세요")
+        return member
+
+    def set_join_code(self, server_id: int, actor_display_name: str, join_code: str) -> Server:
+        """Owner only. Changing the code logs every member out (their
+        tokens are pinned to the old code's fingerprint) - the Owner's own
+        session is re-issued by the API right after."""
+        actor = self._require_member(server_id, actor_display_name)
+        require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
+        return self.server_repo.set_join_code_hash(server_id, hash_secret(_validate_secret(join_code, "입장 코드")))
+
+    def reset_member_pin(self, server_id: int, actor_display_name: str, target_display_name: str) -> ServerMembership:
+        """Owner only - for an admin who forgot their PIN. The target's
+        next admin login sets a new one. (The Owner's own forgotten PIN
+        needs scripts/reset_member_pin.py against the DB.)"""
+        actor = self._require_member(server_id, actor_display_name)
+        require_permission(actor.role, Permission.RESET_MEMBER_PIN)
+        target = self._require_member(server_id, target_display_name)
+        return self.membership_repo.set_pin_hash(target.id, None)
+
+    def change_own_pin(self, member: ServerMembership, current_pin: str, new_pin: str) -> ServerMembership:
+        if member.role not in PIN_REQUIRED_ROLES:
+            raise PermissionDeniedError("PIN은 관리자 계정만 사용합니다")
+        if not verify_secret(current_pin.strip(), self.membership_repo.get_pin_hash(member.id)):
+            raise AuthenticationError("현재 PIN이 올바르지 않습니다")
+        return self.membership_repo.set_pin_hash(member.id, hash_secret(_validate_secret(new_pin, "PIN")))
 
     def _change_role(
         self, server_id: int, target: ServerMembership, new_role: Role, changed_by: str, reason: str | None
