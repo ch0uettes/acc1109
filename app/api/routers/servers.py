@@ -16,6 +16,7 @@ from app.balance.constraint_engine import DEFAULT_CONSTRAINT_REGISTRY
 from app.models.role_change import RoleChange
 from app.models.server import Server
 from app.models.server_membership import ServerMembership
+from app.services.rbac import Permission, require_permission
 from app.services.server_service import ServerService
 from app.utils.exceptions import PermissionDeniedError
 
@@ -50,6 +51,25 @@ class JoinCodeRequest(BaseModel):
 
 class ResetPinRequest(BaseModel):
     target_display_name: str
+
+
+class RenameServerRequest(BaseModel):
+    name: str
+
+
+class RenameMemberRequest(BaseModel):
+    target_display_name: str
+    new_display_name: str
+
+
+class RiotApiKeyRequest(BaseModel):
+    api_key: str
+
+
+class RiotApiKeyStatus(BaseModel):
+    configured: bool
+    source: Optional[str] = None  # "db" | "env" | None
+    last4: Optional[str] = None
 
 
 class ChangePinRequest(BaseModel):
@@ -152,6 +172,46 @@ def set_join_code(
     service = ServerService(db)
     service.set_join_code(server_id, actor.display_name, payload.join_code)
     return _session_response(service, actor)
+
+
+@router.put("/{server_id}/name", response_model=Server)
+def rename_server(
+    server_id: int,
+    payload: RenameServerRequest,
+    db: Session = Depends(get_db),
+    actor: ServerMembership = Depends(get_actor),
+) -> Server:
+    return ServerService(db).rename_server(server_id, actor.display_name, payload.name)
+
+
+@router.put("/{server_id}/members/rename", response_model=ServerMembership)
+def rename_member(
+    server_id: int,
+    payload: RenameMemberRequest,
+    db: Session = Depends(get_db),
+    actor: ServerMembership = Depends(get_actor),
+) -> ServerMembership:
+    return ServerService(db).rename_member(
+        server_id, actor.display_name, payload.target_display_name, payload.new_display_name
+    )
+
+
+@router.get("/{server_id}/riot-api-key", response_model=RiotApiKeyStatus)
+def riot_api_key_status(
+    db: Session = Depends(get_db), actor: ServerMembership = Depends(get_actor)
+) -> RiotApiKeyStatus:
+    require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
+    return RiotApiKeyStatus(**ServerService(db).riot_api_key_status())
+
+
+@router.put("/{server_id}/riot-api-key", response_model=RiotApiKeyStatus)
+def set_riot_api_key(
+    server_id: int,
+    payload: RiotApiKeyRequest,
+    db: Session = Depends(get_db),
+    actor: ServerMembership = Depends(get_actor),
+) -> RiotApiKeyStatus:
+    return RiotApiKeyStatus(**ServerService(db).set_riot_api_key(server_id, actor.display_name, payload.api_key))
 
 
 @router.get("/{server_id}/members", response_model=list[ServerMembership])

@@ -30,7 +30,7 @@ acc1109/                 (저장소 루트)
    | `DATABASE_URL` | Supabase **Transaction Pooler** 연결 문자열 (포트 6543) | 기존 Session pooler(5432)가 아니라 Transaction pooler를 써야 서버리스 다중 인스턴스에서 커넥션이 안 터집니다 |
    | `GOOGLE_VISION_API_KEY` | Google Cloud Vision API 키 | 미설정 시 OCR 자체가 비활성화됩니다 (Vercel엔 Tesseract 바이너리를 못 깔기 때문) |
    | `CORS_ALLOWED_ORIGINS` | 프론트엔드 프로젝트의 배포 URL (예: `https://your-frontend.vercel.app`) | 콤마로 여러 개 가능 |
-   | `RIOT_API_KEY` | (선택) Riot 개발자 키 | 아래 "알려진 제약" 참고 |
+   | `RIOT_API_KEY` | (선택) Riot API 키 | 서버 관리 페이지에서 저장한 값이 우선 - 보통 비워둬도 됩니다 |
    | `CURRENT_SEASON_LABEL` | (선택) 예: `2025-S2` | |
    | `SESSION_SECRET` | **필수.** 충분히 긴 무작위 문자열 (아래 명령으로 생성) | 접속 토큰 서명 키. 미설정 시 로그인 자체가 막힙니다. 바꾸면 전원 로그아웃됩니다 |
    | `SERVER_CREATION_CODE` | (선택) 새 서버를 만들 때 필요한 코드 | **미설정 시 Vercel에서는 새 서버 생성이 비활성화됩니다** - 외부인이 자기 서버를 만들어 OCR 등 유료 API를 쓰는 걸 막기 위함 |
@@ -79,11 +79,7 @@ acc1109/                 (저장소 루트)
   MVP 투표 정도라 영향이 작지만, 투표 조작이 문제가 되면 일반 참가자에게도 PIN을
   적용해야 합니다.
 
-- **Riot API 키 임시 갱신 UX가 사라짐**: 기존 Streamlit 사이드바의 "새 키 붙여넣기"는
-  같은 프로세스가 계속 떠 있다는 전제(in-memory override)로 동작했는데, 서버리스
-  함수는 매 호출마다 새 프로세스일 수 있어 이 방식이 그대로는 안 통합니다. 지금은
-  `RIOT_API_KEY` 환경변수를 Vercel 프로젝트 설정에서 직접 갱신 후 재배포하는 방식만
-  됩니다 - 키가 24시간마다 만료되는 걸 감안하면 운영상 불편하므로, 나중에 DB에 저장된
-  값을 우선 사용하도록 바꾸는 게 좋습니다.
+- **Riot API 키**: 서버 관리 페이지(Owner)에서 저장하면 DB(`app_settings`)에 보관되고 재배포 없이
+  바로 적용됩니다. DB 값이 `RIOT_API_KEY` 환경변수보다 우선합니다. 저장한 키는 다시 표시되지 않습니다.
 - Next.js 프론트엔드는 Streamlit의 6개 페이지(참가자 관리/팀 생성/경기 기록(OCR 포함)/
   MVP 투표/통계/서버 관리)를 모두 구현했습니다.

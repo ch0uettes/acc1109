@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import quote
 
 import requests
@@ -10,6 +10,9 @@ import requests
 from app.config import settings
 from app.riot.schemas import ChampionMasteryEntry, MatchHistoryEntry, RankInfo, RiotAccount
 from app.utils.enums import Division, Position, Tier
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 SOLO_QUEUE = "RANKED_SOLO_5x5"
 RANKED_SOLO_QUEUE_ID = 420  # Match-V5 numeric queue id for ranked solo/duo
@@ -227,13 +230,28 @@ class LiveRiotAPIClient(RiotAPIClient):
         raise NotImplementedError("Champion mastery lookup is not implemented yet")
 
 
-def build_riot_client() -> RiotAPIClient:
-    """DI entry point: returns a working client if RIOT_API_KEY is set,
-    otherwise a client that fails loudly on first use."""
-    if not settings.riot_api_key:
+def resolve_riot_api_key(session: Session | None = None) -> str | None:
+    """The key saved on the 서버 관리 page (app_settings table) wins over
+    the RIOT_API_KEY env var - a DB value survives serverless cold starts
+    and changes without a redeploy, which an env var doesn't."""
+    if session is not None:
+        from app.database.repositories.app_setting_repository import RIOT_API_KEY, AppSettingRepository
+
+        stored = AppSettingRepository(session).get(RIOT_API_KEY)
+        if stored:
+            return stored
+    return settings.riot_api_key
+
+
+def build_riot_client(session: Session | None = None) -> RiotAPIClient:
+    """DI entry point: returns a working client if a Riot API key is
+    configured (see resolve_riot_api_key), otherwise a client that fails
+    loudly on first use."""
+    api_key = resolve_riot_api_key(session)
+    if not api_key:
         return NotImplementedRiotAPIClient()
     return LiveRiotAPIClient(
-        api_key=settings.riot_api_key,
+        api_key=api_key,
         platform=settings.riot_platform,
         region=settings.riot_region,
     )

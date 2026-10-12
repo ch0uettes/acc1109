@@ -10,10 +10,11 @@ import {
   NormalizationConfig,
   RoleChange,
   Server,
+  RiotApiKeyStatus,
   ServerMembership,
   SessionResponse,
 } from "@/lib/api";
-import { saveSession, useSession } from "@/lib/session";
+import { readToken, saveSession, useSession } from "@/lib/session";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -36,6 +37,11 @@ export default function AdminPage() {
   const [resetPinTarget, setResetPinTarget] = useState("");
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
+  const [serverName, setServerName] = useState("");
+  const [renameTarget, setRenameTarget] = useState("");
+  const [renameTo, setRenameTo] = useState("");
+  const [riotKeyStatus, setRiotKeyStatus] = useState<RiotApiKeyStatus | null>(null);
+  const [riotKeyInput, setRiotKeyInput] = useState("");
 
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -45,17 +51,19 @@ export default function AdminPage() {
     if (!serverId || !isAdmin) return;
     api.getServer(serverId).then((s) => {
       setServer(s);
+      setServerName(s.name);
       setSeasonLabel(s.current_season_label);
       setNorm(s.normalization_config);
       setHard(s.hard_constraint_config);
     }).catch((e) => setError(String(e)));
     api.listMembers(serverId).then(setMembers).catch(() => undefined);
+    if (isOwner) api.riotApiKeyStatus(serverId).then(setRiotKeyStatus).catch(() => undefined);
     api.roleChangeHistory(serverId).then(setHistory).catch(() => undefined);
     api.listConstraints(serverId).then((list) => {
       setConstraints(list);
       setPriorities(Object.fromEntries(list.map((c) => [c.name, c.current_priority])));
     }).catch(() => undefined);
-  }, [serverId, isAdmin]);
+  }, [serverId, isAdmin, isOwner]);
 
   useEffect(() => {
     if (loaded && (!serverId || !actorName)) {
@@ -161,6 +169,86 @@ export default function AdminPage() {
           </button>
         </div>
       </div>
+
+      {isOwner && (
+        <div className="card">
+          <h3>서버 이름</h3>
+          <div className="row">
+            <input value={serverName} onChange={(e) => setServerName(e.target.value)} />
+            <button
+              onClick={() => run(() => api.renameServer(serverId, serverName), "서버 이름을 변경했습니다.")}
+              disabled={busy || !serverName.trim() || serverName === server?.name}
+            >
+              변경
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isOwner && (
+        <div className="card">
+          <h3>멤버 이름 변경</h3>
+          <p className="muted">PIN과 역할은 그대로 유지되고, 이름이 바뀐 멤버도 로그아웃되지 않습니다.</p>
+          <div className="row">
+            <select value={renameTarget} onChange={(e) => setRenameTarget(e.target.value)}>
+              <option value="">대상 선택</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.display_name}>
+                  {m.display_name} ({m.role})
+                </option>
+              ))}
+            </select>
+            <input placeholder="새 이름" value={renameTo} onChange={(e) => setRenameTo(e.target.value)} />
+            <button
+              onClick={() =>
+                run(async () => {
+                  const renamed = await api.renameMember(serverId, renameTarget, renameTo);
+                  // Renaming yourself: keep the stored session name in sync
+                  // (the token is tied to the membership id, so it stays valid).
+                  const token = readToken();
+                  if (renameTarget === actorName && token) saveSession(renamed, token);
+                  setRenameTarget("");
+                  setRenameTo("");
+                }, `${renameTarget}의 이름을 ${renameTo}(으)로 변경했습니다.`)
+              }
+              disabled={busy || !renameTarget || !renameTo.trim()}
+            >
+              변경
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isOwner && (
+        <div className="card">
+          <h3>Riot API 키</h3>
+          <p className="muted">
+            {riotKeyStatus?.configured
+              ? `설정됨 (…${riotKeyStatus.last4}, ${riotKeyStatus.source === "db" ? "이 페이지에서 저장" : "환경변수"}).`
+              : "설정되지 않음 - Riot ID 조회와 포지션 추정에 필요합니다."}{" "}
+            저장한 키는 다시 표시되지 않고, 키를 바꿀 때만 새로 입력하면 됩니다.
+          </p>
+          <div className="row">
+            <input
+              type="password"
+              placeholder="RGAPI-..."
+              value={riotKeyInput}
+              onChange={(e) => setRiotKeyInput(e.target.value)}
+            />
+            <button
+              onClick={() =>
+                run(async () => {
+                  setRiotKeyStatus(await api.setRiotApiKey(serverId, riotKeyInput));
+                  setRiotKeyInput("");
+                }, "Riot API 키를 저장했습니다.")
+              }
+              disabled={busy || !riotKeyInput.trim()}
+            >
+              저장
+            </button>
+          </div>
+        </div>
+      )}
 
       {isOwner && (
         <div className="card">

@@ -5,14 +5,23 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import TokenClaims, fingerprint, hash_secret, verify_secret
+from app.auth import (
+    ADMIN_TOKEN_TTL_SECONDS,
+    PLAYER_TOKEN_TTL_SECONDS,
+    TokenClaims,
+    fingerprint,
+    hash_secret,
+    verify_secret,
+)
 from app.balance.config import HardConstraintConfig, NormalizationConfig
+from app.database.repositories.app_setting_repository import RIOT_API_KEY, AppSettingRepository
 from app.database.repositories.role_change_repository import RoleChangeRepository
 from app.database.repositories.server_membership_repository import ServerMembershipRepository
 from app.database.repositories.server_repository import ServerRepository
 from app.models.role_change import RoleChange
 from app.models.server import Server
 from app.models.server_membership import ServerMembership
+from app.riot.client import resolve_riot_api_key
 from app.services.rbac import Permission, require_permission
 from app.utils.enums import Role
 from app.utils.exceptions import (
@@ -57,6 +66,7 @@ class ServerService:
         self.server_repo = ServerRepository(session)
         self.membership_repo = ServerMembershipRepository(session)
         self.role_change_repo = RoleChangeRepository(session)
+        self.app_setting_repo = AppSettingRepository(session)
 
     def create_server(
         self,
@@ -256,6 +266,7 @@ class ServerService:
             member_id=member.id,
             code_fingerprint=fingerprint(self.server_repo.get_join_code_hash(member.server_id)),
             pin_fingerprint=fingerprint(self.membership_repo.get_pin_hash(member.id)),
+            ttl_seconds=ADMIN_TOKEN_TTL_SECONDS if member.role in PIN_REQUIRED_ROLES else PLAYER_TOKEN_TTL_SECONDS,
         )
 
     def resolve_token(self, claims: TokenClaims) -> ServerMembership:
@@ -299,6 +310,58 @@ class ServerService:
         if not verify_secret(current_pin.strip(), self.membership_repo.get_pin_hash(member.id)):
             raise AuthenticationError("현재 PIN이 올바르지 않습니다")
         return self.membership_repo.set_pin_hash(member.id, hash_secret(_validate_secret(new_pin, "PIN")))
+
+    def rename_server(self, server_id: int, actor_display_name: str, name: str) -> Server:
+        actor = self._require_member(server_id, actor_display_name)
+        require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
+        name = name.strip()
+        if not name:
+            raise InvalidSecretError("서버 이름을 입력해주세요")
+        return self.server_repo.rename(server_id, name)
+
+    def rename_member(
+        self, server_id: int, actor_display_name: str, target_display_name: str, new_display_name: str
+    ) -> ServerMembership:
+        """Owner only. Tokens are tied to the membership id, not the name,
+        so the renamed member stays logged in. Past audit rows (role
+        changes) keep the name they were recorded under."""
+        actor = self._require_member(server_id, actor_display_name)
+        require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
+        target = self._require_member(server_id, target_display_name)
+        new_display_name = new_display_name.strip()
+        if not new_display_name:
+            raise InvalidSecretError("새 이름을 입력해주세요")
+        if new_display_name != target.display_name and self.get_member(server_id, new_display_name) is not None:
+            raise DuplicateMembershipError(f"'{new_display_name}'은(는) 이미 사용 중인 이름입니다")
+        try:
+            return self.membership_repo.rename(target.id, new_display_name)
+        except IntegrityError as exc:
+            self.membership_repo.session.rollback()
+            raise DuplicateMembershipError(f"'{new_display_name}'은(는) 이미 사용 중인 이름입니다") from exc
+
+    def riot_api_key_status(self) -> dict[str, str | bool | None]:
+        """Never returns the key itself - only whether one is set, where it
+        comes from, and its last 4 characters so an Owner can tell which
+        key is active."""
+        stored = self.app_setting_repo.get(RIOT_API_KEY)
+        active = resolve_riot_api_key(self.app_setting_repo.session)
+        return {
+            "configured": bool(active),
+            "source": "db" if stored else ("env" if active else None),
+            "last4": active[-4:] if active else None,
+        }
+
+    def set_riot_api_key(self, server_id: int, actor_display_name: str, api_key: str) -> dict[str, str | bool | None]:
+        """Owner only. The key is deployment-wide (one Riot app serves
+        every server), stored in app_settings so it survives cold starts
+        and takes effect without a redeploy."""
+        actor = self._require_member(server_id, actor_display_name)
+        require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
+        api_key = api_key.strip()
+        if not api_key.startswith("RGAPI-"):
+            raise InvalidSecretError("Riot API 키는 'RGAPI-'로 시작해야 합니다")
+        self.app_setting_repo.set(RIOT_API_KEY, api_key, updated_by=actor.display_name)
+        return self.riot_api_key_status()
 
     def _change_role(
         self, server_id: int, target: ServerMembership, new_role: Role, changed_by: str, reason: str | None
