@@ -130,6 +130,12 @@ export interface ServerMembership {
   has_pin: boolean;
 }
 
+export interface RiotApiKeyStatus {
+  configured: boolean;
+  source: "db" | "env" | null;
+  last4: string | null;
+}
+
 export interface SessionResponse {
   token: string;
   member: ServerMembership;
@@ -318,6 +324,16 @@ export const api = {
     }),
   setJoinCode: (serverId: number, joinCode: string) =>
     request<SessionResponse>(`/servers/${serverId}/join-code`, { method: "PUT", body: { join_code: joinCode } }),
+  renameServer: (serverId: number, name: string) =>
+    request<Server>(`/servers/${serverId}/name`, { method: "PUT", body: { name } }),
+  renameMember: (serverId: number, targetDisplayName: string, newDisplayName: string) =>
+    request<ServerMembership>(`/servers/${serverId}/members/rename`, {
+      method: "PUT",
+      body: { target_display_name: targetDisplayName, new_display_name: newDisplayName },
+    }),
+  riotApiKeyStatus: (serverId: number) => request<RiotApiKeyStatus>(`/servers/${serverId}/riot-api-key`),
+  setRiotApiKey: (serverId: number, apiKey: string) =>
+    request<RiotApiKeyStatus>(`/servers/${serverId}/riot-api-key`, { method: "PUT", body: { api_key: apiKey } }),
   resetMemberPin: (serverId: number, targetDisplayName: string) =>
     request<ServerMembership>(`/servers/${serverId}/members/reset-pin`, {
       method: "POST",

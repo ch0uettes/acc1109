@@ -59,7 +59,7 @@ class PlayerService:
         self.internal_rating_change_repo = InternalRatingChangeRepository(session, server_id)
         self.server_repo = server_repo or ServerRepository(session)
         self.official_rating_strategy = official_rating_strategy or CurrentTierPriorityStrategy()
-        self.riot_client = riot_client or build_riot_client()
+        self.riot_client = riot_client or build_riot_client(session)
         self.position_analyzer = position_analyzer or RiotHistoryPositionAnalyzer(self.riot_client)
         self.opgg_client = opgg_client or build_opgg_client()
 
@@ -145,7 +145,7 @@ class PlayerService:
         try:
             rank = self.riot_client.get_rank(player.puuid)
         except NotImplementedError as exc:
-            raise AppError(f"{exc} — 환경변수 RIOT_API_KEY를 설정해주세요.") from exc
+            raise AppError(f"{exc} — 서버 관리 페이지에서 Riot API 키를 설정해주세요.") from exc
         except requests.exceptions.RequestException as exc:
             raise AppError(f"Riot API 조회 실패: {exc}") from exc
         if rank is None:

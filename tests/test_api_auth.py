@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +10,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import deps
+from app.auth import read_token
+from app.riot.client import resolve_riot_api_key
 from app.api.main import app
 from app.api.routers import servers as servers_router
 from app.database.base import Base
@@ -200,3 +203,64 @@ def test_server_creation_is_disabled_on_vercel_without_a_creation_code(client, m
 def test_short_entry_code_or_pin_is_rejected(client):
     body = {"name": "서버", "owner_display_name": "Owner", "join_code": "ab", "owner_pin": "1234"}
     assert client.post("/servers", json=body).status_code == 400
+
+
+def test_player_login_lasts_a_year_but_admin_login_a_month(client):
+    server_id, owner_token = _create_server(client)
+    player_token = _login(client, server_id, "홍길동").json()["token"]
+
+    def days_left(token):
+        import base64, json
+        body = token.split(".")[0]
+        return (json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))["exp"] - time.time()) / 86400
+
+    read_token(player_token)  # signature still verifies
+    assert days_left(player_token) > 360
+    assert 29 < days_left(owner_token) < 31
+
+
+def test_owner_can_rename_the_server_and_a_member_who_stays_logged_in(client):
+    server_id, owner_token = _create_server(client)
+    player_token = _login(client, server_id, "홍길동").json()["token"]
+
+    res = client.put(f"/servers/{server_id}/name", json={"name": "새 이름"}, headers=_auth(owner_token))
+    assert res.status_code == 200 and res.json()["name"] == "새 이름"
+
+    res = client.put(
+        f"/servers/{server_id}/members/rename",
+        json={"target_display_name": "Owner", "new_display_name": "새오너"},
+        headers=_auth(owner_token),
+    )
+    assert res.status_code == 200
+    me = client.get(f"/servers/{server_id}/me", headers=_auth(owner_token))
+    assert me.status_code == 200 and me.json()["display_name"] == "새오너" and me.json()["role"] == "OWNER"
+    # The PIN moved with the membership, under the new name.
+    assert _login(client, server_id, "새오너", pin="1234").status_code == 200
+
+    # Name collisions and non-owners are rejected.
+    res = client.put(
+        f"/servers/{server_id}/members/rename",
+        json={"target_display_name": "새오너", "new_display_name": "홍길동"},
+        headers=_auth(owner_token),
+    )
+    assert res.status_code == 409
+    res = client.put(f"/servers/{server_id}/name", json={"name": "X"}, headers=_auth(player_token))
+    assert res.status_code == 403
+
+
+def test_riot_api_key_is_stored_in_the_db_and_never_returned_in_full(client, db_factory):
+    server_id, owner_token = _create_server(client)
+    player_token = _login(client, server_id, "홍길동").json()["token"]
+    key = "RGAPI-00000000-test-only-0000-abcd"
+
+    res = client.put(f"/servers/{server_id}/riot-api-key", json={"api_key": key}, headers=_auth(player_token))
+    assert res.status_code == 403
+    res = client.put(f"/servers/{server_id}/riot-api-key", json={"api_key": "not-a-key"}, headers=_auth(owner_token))
+    assert res.status_code == 400
+
+    res = client.put(f"/servers/{server_id}/riot-api-key", json={"api_key": key}, headers=_auth(owner_token))
+    assert res.status_code == 200
+    assert res.json() == {"configured": True, "source": "db", "last4": "abcd"}
+    assert key not in res.text
+    with db_factory() as session:
+        assert resolve_riot_api_key(session) == key

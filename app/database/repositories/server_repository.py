@@ -109,6 +109,13 @@ class ServerRepository(BaseRepository[ServerEntity]):
         self.session.refresh(entity)
         return _to_domain(entity)
 
+    def rename(self, server_id: int, name: str) -> Server:
+        entity = self._require_entity(server_id)
+        entity.name = name
+        self.session.commit()
+        self.session.refresh(entity)
+        return _to_domain(entity)
+
     def update_constraint_priorities(self, server_id: int, priorities: dict[str, int]) -> Server:
         entity = self._require_entity(server_id)
         entity.constraint_priorities = priorities

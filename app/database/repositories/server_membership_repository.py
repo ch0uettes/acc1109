@@ -73,6 +73,15 @@ class ServerMembershipRepository(BaseRepository[ServerMembershipEntity]):
         self.session.refresh(entity)
         return _to_domain(entity)
 
+    def rename(self, membership_id: int, display_name: str) -> ServerMembership:
+        entity = self._get_entity(membership_id)
+        if entity is None:
+            raise ValueError(f"ServerMembership {membership_id} not found")
+        entity.display_name = display_name
+        self.session.commit()
+        self.session.refresh(entity)
+        return _to_domain(entity)
+
     def update_role(self, membership_id: int, role: Role) -> ServerMembership:
         entity = self._get_entity(membership_id)
         if entity is None:
