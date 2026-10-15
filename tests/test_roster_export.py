@@ -56,7 +56,7 @@ def test_xlsx_export_produces_one_row_per_player(two_saved_teams):
     df = pd.read_excel(io.BytesIO(data))
 
     assert len(df) == sum(len(t.entries) for t in two_saved_teams)
-    assert list(df.columns) == ["팀", "포지션", "닉네임", "티어"]
+    assert list(df.columns) == ["팀", "포지션", "닉네임", "티어", "팀장"]
     top_row = df[df["닉네임"] == "탑러버"].iloc[0]
     assert top_row["팀"] == 1
     assert top_row["포지션"] == "TOP"
@@ -68,3 +68,18 @@ def test_xlsx_export_shows_unknown_for_a_missing_player(two_saved_teams):
     df = pd.read_excel(io.BytesIO(data))
     support_row = df[df["포지션"] == "SUPPORT"].iloc[0]
     assert support_row["닉네임"] == UNKNOWN_PLAYER_LABEL
+
+
+def test_exports_mark_the_captain_and_only_the_captain(two_saved_teams):
+    for team in two_saved_teams:
+        for i, entry in enumerate(team.entries):
+            if entry.player is not None:
+                entry.player.id = team.index * 10 + i + 1
+    two_saved_teams[0].captain_player_id = two_saved_teams[0].entries[1].player.id  # 정글러 (MASTER)
+
+    text = saved_teams_to_txt(two_saved_teams)
+    assert "JUNGLE: 정글러 [팀장] (마스터 1)" in text
+    assert text.count("[팀장]") == 1
+
+    df = pd.read_excel(io.BytesIO(saved_teams_to_xlsx_bytes(two_saved_teams)))
+    assert df[df["팀장"] == "팀장"]["닉네임"].tolist() == ["정글러"]

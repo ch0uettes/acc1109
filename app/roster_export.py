@@ -24,6 +24,13 @@ def tier_label(player: Player | None) -> str:
     return f"{player.tier.value} {player.division.value}"
 
 
+CAPTAIN_MARK = " [팀장]"
+
+
+def _is_captain(team: SavedTeam, entry) -> bool:
+    return team.captain_player_id is not None and entry.player is not None and entry.player.id == team.captain_player_id
+
+
 def saved_teams_to_txt(saved_teams: list[SavedTeam]) -> str:
     """Plain-text roster, one block per team - meant to be pasted directly
     into Discord/a chat, not parsed back by this app (see app.roster_import
@@ -34,7 +41,8 @@ def saved_teams_to_txt(saved_teams: list[SavedTeam]) -> str:
         lines = [f"{team.index + 1}팀"]
         for entry in team.entries:
             name = entry.player.nickname if entry.player else UNKNOWN_PLAYER_LABEL
-            lines.append(f"{entry.position.value}: {name} ({tier_label(entry.player)})")
+            captain_mark = CAPTAIN_MARK if _is_captain(team, entry) else ""
+            lines.append(f"{entry.position.value}: {name}{captain_mark} ({tier_label(entry.player)})")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + "\n"
 
@@ -49,6 +57,7 @@ def saved_teams_to_xlsx_bytes(saved_teams: list[SavedTeam]) -> bytes:
             "포지션": entry.position.value,
             "닉네임": entry.player.nickname if entry.player else UNKNOWN_PLAYER_LABEL,
             "티어": tier_label(entry.player),
+            "팀장": "팀장" if _is_captain(team, entry) else "",
         }
         for team in saved_teams
         for entry in team.entries

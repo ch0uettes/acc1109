@@ -13,6 +13,7 @@ import {
   Tier,
   TierSnapshot,
 } from "@/lib/api";
+import { usePlayerTable } from "@/lib/playerTable";
 import { useSession } from "@/lib/session";
 
 const TIERS: Tier[] = [
@@ -37,6 +38,7 @@ export default function PlayersPage() {
   const { serverId, actorName, loaded } = useSession();
 
   const [players, setPlayers] = useState<Player[]>([]);
+  const playerTable = usePlayerTable(players);
   const [includeInactive, setIncludeInactive] = useState(false);
   const [tab, setTab] = useState<Tab>("manual");
   const [error, setError] = useState<string | null>(null);
@@ -461,30 +463,35 @@ export default function PlayersPage() {
 
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3 style={{ margin: 0 }}>참가자 목록 ({players.length})</h3>
-          <label className="row" style={{ gap: 4 }}>
-            <input
-              type="checkbox"
-              checked={includeInactive}
-              onChange={(e) => setIncludeInactive(e.target.checked)}
-            />
-            비활성 포함
-          </label>
+          <h3 style={{ margin: 0 }}>
+            참가자 목록 ({playerTable.query ? `${playerTable.rows.length} / ${players.length}` : players.length})
+          </h3>
+          <div className="row">
+            {playerTable.searchInput}
+            <label className="row" style={{ gap: 4 }}>
+              <input
+                type="checkbox"
+                checked={includeInactive}
+                onChange={(e) => setIncludeInactive(e.target.checked)}
+              />
+              비활성 포함
+            </label>
+          </div>
         </div>
         <table>
           <thead>
             <tr>
-              <th>닉네임</th>
-              <th>티어</th>
-              <th>포지션</th>
-              <th>Final Rating</th>
-              <th>출처</th>
-              <th>상태</th>
+              {playerTable.sortTh("nickname", "닉네임")}
+              {playerTable.sortTh("tier", "티어")}
+              {playerTable.sortTh("position", "포지션")}
+              {playerTable.sortTh("rating", "Final Rating")}
+              {playerTable.sortTh("source", "출처")}
+              {playerTable.sortTh("status", "상태")}
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {players.map((p) => (
+            {playerTable.rows.map((p) => (
               <tr key={p.id} style={{ opacity: p.is_active ? 1 : 0.5 }}>
                 <td>{p.nickname}</td>
                 <td>
@@ -516,10 +523,10 @@ export default function PlayersPage() {
                 </td>
               </tr>
             ))}
-            {players.length === 0 && (
+            {playerTable.rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
-                  등록된 참가자가 없습니다.
+                  {players.length === 0 ? "등록된 참가자가 없습니다." : "검색 결과가 없습니다."}
                 </td>
               </tr>
             )}
