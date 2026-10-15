@@ -262,9 +262,11 @@ def _split_riot_id(text: str) -> Optional[tuple[Optional[str], str]]:
 # A gap wider than this many text-heights between two boxes on a row is a
 # column boundary (spreadsheet cell / table column), not a word break.
 CELL_GAP_HEIGHT_RATIO = 1.0
-# Inside one cell, a gap wider than this is a real space ("Hasta La Vista");
-# anything tighter is OCR splitting one word ("플루오" + "린", "#" + "0217").
-WORD_SPACE_HEIGHT_RATIO = 0.25
+# Inside one cell, a gap wider than this between Latin/digit words is a real
+# space ("Hasta La Vista"). Vision splits Latin text only at spaces, but
+# Hangul at arbitrary points ("명이" + "나물" from "명이나물"), so Hangul
+# pairs and anything touching the '#' are always joined without one.
+WORD_SPACE_HEIGHT_RATIO = 0.1
 # A '#'-less cell counts as the Riot ID column if it starts this close to
 # where the rows that do have a '#' start.
 RIOT_COLUMN_TOLERANCE_HEIGHT_RATIO = 2.0
@@ -294,8 +296,14 @@ def _row_cells(row: list[_Box], text_height: float) -> list[_Cell]:
             continue
         if cells and left - cells[-1].right <= text_height * CELL_GAP_HEIGHT_RATIO:
             gap = left - cells[-1].right
-            joiner = " " if gap > text_height * WORD_SPACE_HEIGHT_RATIO else ""
-            cells[-1] = _Cell(cells[-1].left, right, cells[-1].text + joiner + text)
+            previous = cells[-1].text
+            glued = (
+                (_is_pure_hangul(previous[-1]) and _is_pure_hangul(text[0]))
+                or previous.endswith("#")
+                or text.startswith("#")
+            )
+            joiner = "" if glued or gap <= text_height * WORD_SPACE_HEIGHT_RATIO else " "
+            cells[-1] = _Cell(cells[-1].left, right, previous + joiner + text)
         else:
             cells.append(_Cell(left, right, text))
     return cells
@@ -357,12 +365,19 @@ def parse_detections_into_riot_ids(detections: list[Detection]) -> list[OCRRiotI
             riot_cell = min(aligned, key=lambda cell: abs(cell.left - riot_column_left))
 
         game_name, tag_line = _split_riot_cell(riot_cell.text)
-        if not game_name:
-            continue
         name_cells = [cell for cell in cells if cell.right <= riot_cell.left]
+        # Anything between the nickname and the '#' cell is the start of the
+        # game name, cut off by a gap where OCR missed a character
+        # ("둔둔" + "줘라#kri" from "둔둔빵줘라#kri").
+        game_name = "".join(cell.text for cell in name_cells[1:]) + game_name
+        nickname = name_cells[0].text if name_cells else game_name
+        if not nickname:
+            continue
         parsed.append(
             OCRRiotIdRow(
-                nickname=name_cells[0].text if name_cells else game_name,
+                # An empty game name (OCR read only "#KR1") is kept so the
+                # row still shows up on the review table to be filled in.
+                nickname=nickname,
                 game_name=game_name,
                 tag_line=tag_line,
                 raw_text=" | ".join(cell.text for cell in cells),
