@@ -428,29 +428,43 @@ export default function PlayersPage() {
                       <th>닉네임</th>
                       <th>게임 이름</th>
                       <th>태그</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
                     {bulkRows.map((row, i) => (
                       <tr key={i}>
+                        {(["nickname", "game_name", "tag_line"] as const).map((field) => (
+                          <td key={field}>
+                            <input
+                              value={row[field]}
+                              // OCR misreads are common - every field is
+                              // editable, and an empty one is flagged.
+                              style={row[field].trim() ? undefined : { borderColor: "#e5484d" }}
+                              onChange={(e) => {
+                                const next = [...bulkRows];
+                                next[i] = { ...row, [field]: e.target.value };
+                                setBulkRows(next);
+                              }}
+                            />
+                          </td>
+                        ))}
                         <td>
-                          <input
-                            value={row.nickname}
-                            onChange={(e) => {
-                              const next = [...bulkRows];
-                              next[i] = { ...row, nickname: e.target.value };
-                              setBulkRows(next);
-                            }}
-                          />
+                          <button
+                            className="secondary"
+                            onClick={() => setBulkRows(bulkRows.filter((_, j) => j !== i))}
+                            disabled={busy}
+                          >
+                            삭제
+                          </button>
                         </td>
-                        <td>{row.game_name}</td>
-                        <td>{row.tag_line}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <p className="muted">
-                  언랭 참가자는 Seed Tier GOLD로 임시 등록됩니다 - 등록 후 목록에서 직접 수정해주세요.
+                  OCR 결과는 원본과 꼭 대조해주세요 - 빨간 칸은 읽지 못한 값입니다. 언랭 참가자는 Seed Tier GOLD로
+                  임시 등록됩니다 - 등록 후 목록에서 직접 수정해주세요.
                 </p>
                 <button onClick={handleBulkRegister} disabled={busy}>
                   일괄 조회 및 추가

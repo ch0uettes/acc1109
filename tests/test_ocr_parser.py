@@ -348,3 +348,30 @@ def test_tier_column_glued_onto_a_long_riot_id_is_cut_off():
         ("서울대분노조절학과", "gnar"),
         ("미크로파키케팔로사우르스", ""),  # '#tag' cut off in the capture itself - left for review
     ]
+
+
+def test_hangul_words_vision_split_are_joined_without_a_space():
+    # "명이나물" came back as "명이" + "나물" with a few px between them.
+    detections = _row(10, ("권명", 12, 24), ("명이", 95, 24), ("나물", 123, 24), ("#skanf", 147, 36))
+
+    [row] = parse_detections_into_riot_ids(detections)
+
+    assert (row.game_name, row.tag_line) == ("명이나물", "skanf")
+
+
+def test_game_name_start_cut_off_by_a_missed_character_is_kept():
+    # "둔둔빵줘라#kri" read without "빵", leaving a column-sized gap that
+    # split "둔둔" into its own cell.
+    detections = _row(10, ("김경태", 12, 36), ("둔둔", 95, 24), ("줘라", 140, 24), ("#kri", 164, 24))
+
+    [row] = parse_detections_into_riot_ids(detections)
+
+    assert (row.nickname, row.game_name, row.tag_line) == ("김경태", "둔둔줘라", "kri")
+
+
+def test_row_whose_game_name_ocr_missed_entirely_is_kept_for_review():
+    detections = _row(10, ("강도원", 12, 36), ("#", 140, 8), ("KR1", 148, 24))
+
+    [row] = parse_detections_into_riot_ids(detections)
+
+    assert (row.nickname, row.game_name, row.tag_line) == ("강도원", "", "KR1")
