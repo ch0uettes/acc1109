@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   api,
@@ -12,9 +12,18 @@ import {
   SavedTeam,
   Strategy,
 } from "@/lib/api";
+import { captainId, POSITION_ORDER, usePlayerTable } from "@/lib/playerTable";
 import { useSession } from "@/lib/session";
 
-const POSITIONS: Position[] = ["TOP", "JUNGLE", "MID", "ADC", "SUPPORT"];
+const POSITIONS: Position[] = POSITION_ORDER;
+
+function CaptainBadge() {
+  return (
+    <span className="badge" style={{ marginLeft: 4 }}>
+      팀장
+    </span>
+  );
+}
 
 const STRATEGY_LABELS: Record<Strategy, string> = {
   competitive: "Competitive - 라인전 공정성 최우선",
@@ -33,6 +42,8 @@ export default function TeamsPage() {
   const { serverId, actorName, loaded } = useSession();
 
   const [players, setPlayers] = useState<Player[]>([]);
+  const activePlayers = useMemo(() => players.filter((p) => p.is_active), [players]);
+  const playerTable = usePlayerTable(activePlayers);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [overrides, setOverrides] = useState<Record<number, OverrideState>>({});
   const [strategy, setStrategy] = useState<Strategy>("stable");
@@ -162,7 +173,6 @@ export default function TeamsPage() {
 
   if (!loaded || !serverId || !actorName) return null;
 
-  const activePlayers = players.filter((p) => p.is_active);
   const selectedPlayers = activePlayers.filter((p) => selected.has(p.id));
 
   return (
@@ -212,6 +222,7 @@ export default function TeamsPage() {
                   {team.entries.map((entry, i) => (
                     <div key={i} className="muted">
                       {entry.position}: {entry.player?.nickname ?? "알 수 없음"}
+                      {entry.player && entry.player.id === team.captain_player_id && <CaptainBadge />}
                     </div>
                   ))}
                 </div>
@@ -233,19 +244,29 @@ export default function TeamsPage() {
       </div>
 
       <div className="card">
-        <h3>참가자 선택 (5명 단위, {selected.size}명 선택됨)</h3>
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h3 style={{ margin: 0 }}>참가자 선택 (5명 단위, {selected.size}명 선택됨)</h3>
+          {playerTable.searchInput}
+        </div>
         <table>
           <thead>
             <tr>
               <th></th>
-              <th>닉네임</th>
-              <th>티어</th>
-              <th>포지션</th>
+              {playerTable.sortTh("nickname", "닉네임")}
+              {playerTable.sortTh("tier", "티어")}
+              {playerTable.sortTh("position", "포지션")}
               <th>이번 경기 전용 포지션</th>
             </tr>
           </thead>
           <tbody>
-            {activePlayers.map((p) => (
+            {playerTable.rows.length === 0 && (
+              <tr>
+                <td colSpan={5} className="muted">
+                  {activePlayers.length === 0 ? "등록된 참가자가 없습니다." : "검색 결과가 없습니다."}
+                </td>
+              </tr>
+            )}
+            {playerTable.rows.map((p) => (
               <tr key={p.id}>
                 <td>
                   <input
@@ -329,23 +350,31 @@ export default function TeamsPage() {
           </div>
 
           <div className="row" style={{ alignItems: "flex-start", marginTop: 12 }}>
-            {generateResponse.results[comboIndex].teams.map((team) => (
-              <div key={team.index} style={{ minWidth: 180 }}>
-                <strong>{team.index + 1}팀</strong>
-                {(team.slots ?? []).map((slot, i) => (
-                  <div key={i} className="muted">
-                    {slot.position}: {slot.player.nickname} ({slot.player.tier})
-                    {slot.role_penalty ? ` [${slot.role_source}, +${slot.role_penalty.toFixed(0)}]` : ""}
-                  </div>
-                ))}
-                {!team.slots &&
-                  team.players.map((p) => (
-                    <div key={p.id} className="muted">
-                      {p.nickname} ({p.tier})
+            {generateResponse.results[comboIndex].teams.map((team) => {
+              const teamCaptain = captainId(team.players);
+              const slots = [...(team.slots ?? [])].sort(
+                (a, b) => POSITION_ORDER.indexOf(a.position) - POSITION_ORDER.indexOf(b.position)
+              );
+              return (
+                <div key={team.index} style={{ minWidth: 180 }}>
+                  <strong>{team.index + 1}팀</strong>
+                  {slots.map((slot, i) => (
+                    <div key={i} className="muted">
+                      {slot.position}: {slot.player.nickname} ({slot.player.tier})
+                      {slot.player.id === teamCaptain && <CaptainBadge />}
+                      {slot.role_penalty ? ` [${slot.role_source}, +${slot.role_penalty.toFixed(0)}]` : ""}
                     </div>
                   ))}
-              </div>
-            ))}
+                  {!team.slots &&
+                    team.players.map((p) => (
+                      <div key={p.id} className="muted">
+                        {p.nickname} ({p.tier})
+                        {p.id === teamCaptain && <CaptainBadge />}
+                      </div>
+                    ))}
+                </div>
+              );
+            })}
           </div>
 
           {generateResponse.results[comboIndex].contributions.length > 0 && (

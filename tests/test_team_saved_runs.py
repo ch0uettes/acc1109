@@ -124,3 +124,30 @@ def test_two_saves_with_a_colliding_clock_still_get_distinct_runs(session, monke
     all_player_ids_per_run = [{e.player.id for t in roster for e in t.entries} for roster in rosters]
     assert {p.id for p in players[10:15]} in all_player_ids_per_run
     assert {p.id for p in players[:10]} in all_player_ids_per_run
+
+
+def test_load_saved_run_orders_lanes_and_marks_the_highest_tier_as_captain(session):
+    player_service = PlayerService(session, server_id=1)
+    specs = [
+        ("서폿", Position.SUPPORT, Tier.GOLD, Division.I, 50),
+        ("원딜", Position.ADC, Tier.DIAMOND, Division.IV, 10),
+        ("미드", Position.MID, Tier.DIAMOND, Division.II, 0),  # highest: DIAMOND II beats DIAMOND IV
+        ("정글", Position.JUNGLE, Tier.UNRANKED, Division.IV, 0),
+        ("탑", Position.TOP, Tier.SILVER, Division.I, 99),
+    ]
+    players = [
+        player_service.create_player(
+            Player(nickname=n, tier=t, division=d, lp=lp, main_role=role), actor_role=Role.SERVER_ADMIN
+        )
+        for n, role, t, d, lp in specs
+    ]
+    team_service = TeamService(session, server_id=1)
+    # Saved in deliberately scrambled (SUPPORT-first) order.
+    team_service.save_generated_teams(
+        BalanceResult(teams=[Team(index=0, players=players)], cost=0.0), actor_role=Role.SERVER_ADMIN
+    )
+
+    [team] = team_service.load_saved_run(team_service.list_saved_runs()[0])
+    assert [e.position for e in team.entries] == list(Position)
+    captain = next(e.player for e in team.entries if e.player.id == team.captain_player_id)
+    assert captain.nickname == "미드"

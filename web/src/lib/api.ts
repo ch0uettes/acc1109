@@ -189,6 +189,7 @@ export interface SavedRosterEntry {
 export interface SavedTeam {
   index: number;
   entries: SavedRosterEntry[];
+  captain_player_id: number | null;
 }
 
 export type Strategy = "competitive" | "comfort" | "stable";
