@@ -4,8 +4,8 @@ from app.ocr.parser import (
     cluster_rows,
     detect_winning_team,
     extract_detail_stats,
+    parse_detections_into_riot_ids,
     parse_rows_into_players,
-    parse_rows_into_riot_ids,
 )
 
 
@@ -225,72 +225,126 @@ def test_extract_detail_stats_reads_cs_row_by_label_prefix():
     assert stats["damage"] == [76904, 38673, 125598, 25310, 24103, 43984, 51485, 18722, 32756, 68726]
 
 
-# --- parse_rows_into_riot_ids: participant-roster (nickname + Riot ID) screenshots ---
+# --- parse_detections_into_riot_ids: participant-roster screenshots ---
+# Layout and word splits mirror a real spreadsheet capture run through
+# Google Vision: nickname | Riot ID | current tier | peak tier | main | sub,
+# with Vision splitting a Riot ID into several word boxes ("플루오", "린",
+# "#", "0217") - looking for one box holding the whole ID lost most rows.
+
+TEXT_H = 14
 
 
-def test_parse_riot_ids_splits_nickname_and_riot_id_in_separate_boxes():
-    rows = [
-        [(0, "임도현"), (100, "Hideonbush#KR1")],
-        [(0, "정하민"), (100, "Faker#KR2")],
+def _row(y: float, *words: tuple[str, float, float]) -> list:
+    """words: (text, left, width) at the same y."""
+    return [(_box(left, y, w=width, h=TEXT_H), text, 1.0) for text, left, width in words]
+
+
+def _tier_and_role_columns(y: float) -> list:
+    return _row(y, ("다이아", 197, 30), ("1", 228, 6), ("다이아", 255, 30), ("4", 286, 6), ("정글", 320, 24), ("탑", 375, 12))
+
+
+def test_riot_id_split_into_several_vision_words_is_rejoined():
+    detections = _row(10, ("허재혁", 12, 36), ("플루오", 95, 36), ("린", 131, 12), ("#", 143, 8), ("0217", 151, 28))
+    detections += _tier_and_role_columns(10)
+
+    [row] = parse_detections_into_riot_ids(detections)
+
+    assert (row.nickname, row.game_name, row.tag_line) == ("허재혁", "플루오린", "0217")
+
+
+def test_other_columns_never_leak_into_the_nickname():
+    detections = _row(10, ("강민수", 12, 36), ("KIRBY", 95, 40), ("#ROK", 135, 30)) + _tier_and_role_columns(10)
+
+    [row] = parse_detections_into_riot_ids(detections)
+
+    assert row.nickname == "강민수"
+    assert (row.game_name, row.tag_line) == ("KIRBY", "ROK")
+
+
+def test_real_spaces_inside_a_game_name_are_kept():
+    detections = _row(
+        10, ("신재원", 12, 36), ("Hasta", 95, 30), ("La", 130, 12), ("Vista", 147, 28), ("#", 175, 8), ("more", 183, 24)
+    )
+
+    [row] = parse_detections_into_riot_ids(detections)
+
+    assert (row.game_name, row.tag_line) == ("Hasta La Vista", "more")
+
+
+def test_korean_custom_tag_is_accepted():
+    # Riot's KR server allows an arbitrary Hangul tag ("한아른#담배연기" is
+    # a real account verified against the live Riot API).
+    detections = _row(10, ("박찬학", 12, 36), ("한아", 95, 24), ("른", 119, 12), ("#", 131, 8), ("담배", 139, 24), ("연기", 163, 24))
+
+    [row] = parse_detections_into_riot_ids(detections)
+
+    assert (row.nickname, row.game_name, row.tag_line) == ("박찬학", "한아른", "담배연기")
+
+
+def test_nickname_split_into_syllable_boxes_is_rejoined():
+    detections = _row(10, ("구동", 12, 24), ("하", 36, 12), ("오라", 95, 24), ("#EVA", 119, 30))
+
+    [row] = parse_detections_into_riot_ids(detections)
+
+    assert row.nickname == "구동하"
+
+
+def test_row_where_ocr_missed_the_hash_is_kept_from_the_riot_id_column():
+    detections = _row(10, ("허재혁", 12, 36), ("플루오린#0217", 95, 60)) + _tier_and_role_columns(10)
+    detections += _row(40, ("이찬우", 12, 36), ("건전지", 95, 36), ("KR1", 136, 24)) + _tier_and_role_columns(40)
+
+    rows = parse_detections_into_riot_ids(detections)
+
+    assert [(r.nickname, r.game_name, r.tag_line) for r in rows] == [
+        ("허재혁", "플루오린", "0217"),
+        ("이찬우", "건전지", "KR1"),
     ]
 
-    parsed = parse_rows_into_riot_ids(rows)
 
-    assert len(parsed) == 2
-    assert parsed[0].nickname == "임도현"
-    assert parsed[0].game_name == "Hideonbush"
-    assert parsed[0].tag_line == "KR1"
-    assert parsed[1].nickname == "정하민"
-    assert parsed[1].game_name == "Faker"
-    assert parsed[1].tag_line == "KR2"
+def test_every_row_of_a_multi_row_roster_is_read():
+    names = ["허재혁", "강민수", "김경태", "최원준", "권명"]
+    detections = []
+    for i, name in enumerate(names):
+        y = 10 + i * 20  # ~20px row pitch, same as the real capture
+        detections += _row(y, (name, 12, 36), (f"게임{i}", 95, 30), ("#", 125, 8), ("KR1", 133, 24))
+        detections += _tier_and_role_columns(y)
 
+    rows = parse_detections_into_riot_ids(detections)
 
-def test_parse_riot_ids_accepts_a_korean_custom_tag():
-    # Riot's KR server allows an arbitrary Hangul custom tag, not just a
-    # region code - verified directly against the live Riot API with a real
-    # account ("한아른#담배연기"), so the tag pattern must accept Hangul too.
-    rows = [[(0, "박찬학"), (100, "한아른#담배연기")]]
-
-    parsed = parse_rows_into_riot_ids(rows)
-
-    assert len(parsed) == 1
-    assert parsed[0].nickname == "박찬학"
-    assert parsed[0].game_name == "한아른"
-    assert parsed[0].tag_line == "담배연기"
+    assert [r.nickname for r in rows] == names
+    assert all(r.tag_line == "KR1" for r in rows)
 
 
-def test_parse_riot_ids_recovers_game_name_split_across_a_space_before_hash():
-    # OCR sometimes detects "Hide on bush" and "#KR1" as two separate boxes
-    # when there's a visible gap before the '#'.
-    rows = [[(0, "임도현"), (100, "Hide on bush"), (250, "#KR1")]]
+def test_nickname_defaults_to_game_name_when_there_is_no_name_column():
+    [row] = parse_detections_into_riot_ids(_row(10, ("Hideonbush#KR1", 12, 90)))
 
-    parsed = parse_rows_into_riot_ids(rows)
-
-    assert len(parsed) == 1
-    assert parsed[0].nickname == "임도현"
-    assert parsed[0].game_name == "Hide on bush"
-    assert parsed[0].tag_line == "KR1"
+    assert (row.nickname, row.game_name, row.tag_line) == ("Hideonbush", "Hideonbush", "KR1")
 
 
-def test_parse_riot_ids_defaults_nickname_to_game_name_when_no_other_box():
-    rows = [[(0, "Hideonbush#KR1")]]
+def test_captions_and_rows_without_a_riot_id_are_skipped():
+    detections = _row(10, ("참가자 명단", 12, 80))
+    detections += _row(40, ("임도현", 12, 36), ("Hideonbush#KR1", 95, 90))
 
-    parsed = parse_rows_into_riot_ids(rows)
+    rows = parse_detections_into_riot_ids(detections)
 
-    assert len(parsed) == 1
-    assert parsed[0].nickname == "Hideonbush"
-    assert parsed[0].game_name == "Hideonbush"
-    assert parsed[0].tag_line == "KR1"
+    assert [r.nickname for r in rows] == ["임도현"]
 
 
-def test_parse_riot_ids_skips_rows_without_a_hash():
-    rows = [
-        [(0, "참가자 명단")],
-        [(0, "임도현"), (100, "Hideonbush#KR1")],
-        [(0, "")],
+def test_no_riot_ids_at_all_returns_nothing():
+    assert parse_detections_into_riot_ids(_row(10, ("그냥", 12, 30), ("텍스트", 60, 40))) == []
+
+
+def test_tier_column_glued_onto_a_long_riot_id_is_cut_off():
+    # "서울대분노조절학과#gnar" runs right up to the tier column, so OCR
+    # joins the two with no visible gap.
+    detections = _row(
+        10, ("김동규", 12, 36), ("서울대분노조절학과", 95, 80), ("#gnar", 175, 20), ("에메", 196, 24), ("3", 221, 6)
+    )
+    detections += _row(40, ("최병관", 12, 36), ("미크로파키케팔로사우르스", 95, 100), ("다이아", 196, 30), ("4", 227, 6), ("미드", 320, 24))
+
+    rows = parse_detections_into_riot_ids(detections)
+
+    assert [(r.game_name, r.tag_line) for r in rows] == [
+        ("서울대분노조절학과", "gnar"),
+        ("미크로파키케팔로사우르스", ""),  # '#tag' cut off in the capture itself - left for review
     ]
-
-    parsed = parse_rows_into_riot_ids(rows)
-
-    assert len(parsed) == 1
-    assert parsed[0].nickname == "임도현"
