@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import statistics
+from dataclasses import dataclass
 from difflib import get_close_matches
 from typing import Optional
 
@@ -125,20 +127,34 @@ def cluster_rows(detections: list[Detection], image_height: float) -> list[list[
     contents left-to-right by x and re-joining Hangul text Tesseract split
     across multiple boxes (see _merge_split_hangul). Returns list of rows,
     each a list of (center_x, text)."""
-    y_tolerance = image_height * ROW_Y_TOLERANCE_RATIO
+    rows = _group_rows(detections, y_tolerance=image_height * ROW_Y_TOLERANCE_RATIO)
+    return [_merge_split_hangul(row) for row in rows]
+
+
+# (center_x, left, right, height, text) of one detection box.
+_Box = tuple[float, float, float, float, str]
+
+
+def _box_height(bbox: list[list[float]]) -> float:
+    ys = [p[1] for p in bbox]
+    return max(ys) - min(ys)
+
+
+def _group_rows(detections: list[Detection], y_tolerance: float) -> list[list[_Box]]:
+    """Groups detections into rows by y-proximity, each row sorted left to
+    right."""
 
     def _edges(bbox: list[list[float]]) -> tuple[float, float, float]:
         xs = [p[0] for p in bbox]
-        ys = [p[1] for p in bbox]
-        return min(xs), max(xs), max(ys) - min(ys)
+        return min(xs), max(xs), _box_height(bbox)
 
     items = sorted(
         ((*_center(bbox), *_edges(bbox), text) for bbox, text, _conf in detections),
         key=lambda t: t[1],
     )
 
-    rows: list[list[tuple[float, float, float, float, str]]] = []
-    current_row: list[tuple[float, float, float, float, str]] = []
+    rows: list[list[_Box]] = []
+    current_row: list[_Box] = []
     row_y: Optional[float] = None
 
     for cx, cy, left, right, height, text in items:
@@ -151,7 +167,7 @@ def cluster_rows(detections: list[Detection], image_height: float) -> list[list[
             row_y = cy
     if current_row:
         rows.append(sorted(current_row, key=lambda t: t[0]))
-    return [_merge_split_hangul(row) for row in rows]
+    return rows
 
 
 def _row_text(row: list[tuple[float, str]]) -> str:
@@ -243,59 +259,116 @@ def _split_riot_id(text: str) -> Optional[tuple[Optional[str], str]]:
     return game_name, tag_match.group(0)
 
 
-def parse_rows_into_riot_ids(rows: list[list[tuple[float, str]]]) -> list[OCRRiotIdRow]:
-    """Row -> OCRRiotIdRow, for a participant-roster screenshot (nickname +
-    Riot ID per row) rather than a match scoreboard. Only rows containing a
-    '#' are kept - anything else (headers, blank lines, unrelated text) is
-    silently skipped, so this tolerates an arbitrary screenshot layout as
-    long as nickname and Riot ID share one visual row.
+# A gap wider than this many text-heights between two boxes on a row is a
+# column boundary (spreadsheet cell / table column), not a word break.
+CELL_GAP_HEIGHT_RATIO = 1.0
+# Inside one cell, a gap wider than this is a real space ("Hasta La Vista");
+# anything tighter is OCR splitting one word ("플루오" + "린", "#" + "0217").
+WORD_SPACE_HEIGHT_RATIO = 0.25
+# A '#'-less cell counts as the Riot ID column if it starts this close to
+# where the rows that do have a '#' start.
+RIOT_COLUMN_TOLERANCE_HEIGHT_RATIO = 2.0
 
-    The Riot ID's own game_name is read from whichever single detection box
-    actually contains the '#' - never guessed by splitting the row's full
-    concatenated text, which would have no reliable boundary between an
-    adjacent nickname and the game name. Every other box on the row is
-    treated as nickname text; if none remain, the game_name itself doubles
-    as the nickname guess (the common case where the operator's display
-    name and Riot ID's game name are the same)."""
-    riot_id_rows: list[OCRRiotIdRow] = []
 
-    for row in rows:
-        riot_id = None
-        tag_box_index = None
-        for i, (_, text) in enumerate(row):
-            riot_id = _split_riot_id(text)
-            if riot_id is not None:
-                tag_box_index = i
-                break
-        if riot_id is None:
+# A tier column ("다이아 4", "마스터 100", "언랭") that OCR glued onto a long
+# Riot ID touching it - including Vision's usual misreads of the tier
+# names (에메 -> 어머/에머, 플레 -> 플러). Requires the trailing number (or
+# the standalone 언랭) so a game name merely containing "골드" survives.
+_SPILLED_TIER_PATTERN = re.compile(
+    r"\s*(?:(?:아이언|브론즈|실버|골드|플레|플래|플러|에메|에머|어머|다이아|마스터|그랜드마스터|그마|챌린저)\s*\d+|언랭).*$"
+)
+
+
+@dataclass
+class _Cell:
+    left: float
+    right: float
+    text: str
+
+
+def _row_cells(row: list[_Box], text_height: float) -> list[_Cell]:
+    cells: list[_Cell] = []
+    for _cx, left, right, _height, text in row:
+        text = text.strip()
+        if not text:
             continue
+        if cells and left - cells[-1].right <= text_height * CELL_GAP_HEIGHT_RATIO:
+            gap = left - cells[-1].right
+            joiner = " " if gap > text_height * WORD_SPACE_HEIGHT_RATIO else ""
+            cells[-1] = _Cell(cells[-1].left, right, cells[-1].text + joiner + text)
+        else:
+            cells.append(_Cell(left, right, text))
+    return cells
 
-        game_name, tag_line = riot_id
-        game_name_box_index = tag_box_index
-        if game_name is None:
-            # '#TAG' was its own box - the game name is whatever OCR put in
-            # the box immediately before it, if any.
-            if tag_box_index == 0:
+
+def _split_riot_cell(text: str) -> tuple[str, str]:
+    """(game_name, tag_line) from one Riot ID cell. Spaces around the '#'
+    are OCR word splits, not part of either half. Without a '#' (OCR
+    missed it, e.g. "건전지 KR1"), the last word is taken as the tag when it
+    looks like one; otherwise the tag is left empty for the operator to
+    fill in on the review table."""
+    spilled = _SPILLED_TIER_PATTERN.search(text)
+    if spilled and spilled.start() > 0:
+        text = text[: spilled.start()]
+    if "#" in text:
+        game_name, _, remainder = text.partition("#")
+        tag_match = _RIOT_TAG_PATTERN.match(remainder.replace(" ", ""))
+        return game_name.strip(), tag_match.group(0) if tag_match else ""
+    words = text.split()
+    if len(words) >= 2 and _RIOT_TAG_PATTERN.fullmatch(words[-1]):
+        return " ".join(words[:-1]), words[-1]
+    return text.strip(), ""
+
+
+def parse_detections_into_riot_ids(detections: list[Detection]) -> list[OCRRiotIdRow]:
+    """Detections -> OCRRiotIdRow, for a participant-roster screenshot
+    (nickname + Riot ID per row, possibly with more columns such as tier
+    and positions - e.g. a spreadsheet capture).
+
+    Works on cells rather than single OCR boxes: Google Vision splits a
+    Riot ID like "플루토리#0217" into several word boxes ("플루오", "린",
+    "#", "0217"), so looking for one box containing the whole ID dropped
+    most rows. Boxes are joined into cells by horizontal gap, the Riot ID
+    column is located from the cells that contain a '#', and the nickname
+    is the first cell left of it - every other column (tier, positions,
+    ...) is ignored. Rows where OCR missed the '#' are still kept when a
+    cell lines up with the Riot ID column, so the operator can fix them on
+    the review table instead of losing the row entirely."""
+    if not detections:
+        return []
+    text_height = statistics.median(_box_height(bbox) for bbox, _text, _conf in detections) or 1.0
+    rows = [_row_cells(row, text_height) for row in _group_rows(detections, y_tolerance=text_height * 0.5)]
+
+    hash_lefts = [cell.left for cells in rows for cell in cells if "#" in cell.text]
+    if not hash_lefts:
+        return []
+    riot_column_left = statistics.median(hash_lefts)
+    column_tolerance = text_height * RIOT_COLUMN_TOLERANCE_HEIGHT_RATIO
+
+    parsed: list[OCRRiotIdRow] = []
+    for cells in rows:
+        riot_cell = next((cell for cell in cells if "#" in cell.text), None)
+        if riot_cell is None:
+            aligned = [cell for cell in cells if abs(cell.left - riot_column_left) <= column_tolerance]
+            # A lone aligned cell is more likely a header/caption than a
+            # roster row with a missed '#'.
+            if not aligned or len(cells) < 3:
                 continue
-            game_name = row[tag_box_index - 1][1].strip()
-            if not game_name:
-                continue
-            game_name_box_index = tag_box_index - 1
+            riot_cell = min(aligned, key=lambda cell: abs(cell.left - riot_column_left))
 
-        excluded = {tag_box_index, game_name_box_index}
-        other_texts = [text for i, (_, text) in enumerate(row) if i not in excluded]
-        nickname = " ".join(t.strip() for t in other_texts if t.strip()) or game_name
-
-        riot_id_rows.append(
+        game_name, tag_line = _split_riot_cell(riot_cell.text)
+        if not game_name:
+            continue
+        name_cells = [cell for cell in cells if cell.right <= riot_cell.left]
+        parsed.append(
             OCRRiotIdRow(
-                nickname=nickname,
+                nickname=name_cells[0].text if name_cells else game_name,
                 game_name=game_name,
                 tag_line=tag_line,
-                raw_text=_row_text(row),
+                raw_text=" | ".join(cell.text for cell in cells),
             )
         )
-
-    return riot_id_rows
+    return parsed
 
 
 def detect_winning_team(rows: list[list[tuple[float, str]]]) -> Optional[int]:
