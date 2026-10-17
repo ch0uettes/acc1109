@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -33,6 +34,13 @@ from app.riot.client import RiotAPIClient, build_riot_client
 from app.services.rbac import Permission, require_permission
 from app.utils.enums import Division, Position, RatingSource, Role, Tier
 from app.utils.exceptions import AppError, InvalidRatingValueError
+
+# Vercel kills an API request at 30s (vercel.json maxDuration) - a
+# position inference that ran longer surfaced in the browser as a bare
+# "Failed to fetch", taking the already-successful Riot ID lookup down with
+# it. The inference stops starting new Riot requests after this long and
+# recommends from the games read so far.
+POSITION_INFERENCE_BUDGET_SECONDS = 20.0
 
 MAX_INTERNAL_RATING_MAGNITUDE = 3000.0
 
@@ -258,10 +266,14 @@ class PlayerService:
         never applied automatically after registration, and - same
         "never raises, always optional" contract as resolve_peak_tier's
         OP.GG lookup - never something a registration should fail over."""
+        previous_deadline = getattr(self.riot_client, "deadline", None)
+        self.riot_client.deadline = time.monotonic() + POSITION_INFERENCE_BUDGET_SECONDS
         try:
             return self.position_analyzer.recommend(puuid)
         except requests.exceptions.RequestException:
             return None
+        finally:
+            self.riot_client.deadline = previous_deadline
 
     def register_player(
         self,

@@ -15,7 +15,9 @@ from app.riot.client import RiotAPIClient
 # re-check, up to MAX_MATCHES_FOR_POSITION.
 MIN_MATCHES_FOR_POSITION = 20
 POSITION_WINDOW_STEP = 20
-MAX_MATCHES_FOR_POSITION = 100
+# 40, not more: each game is one Match-V5 request, and a whole inference has
+# to fit in one serverless request (see PlayerService.infer_position).
+MAX_MATCHES_FOR_POSITION = 40
 CONFIDENT_POSITION_RATIO = 0.6
 
 
