@@ -145,7 +145,7 @@ class PlayerService:
         try:
             rank = self.riot_client.get_rank(player.puuid)
         except NotImplementedError as exc:
-            raise AppError(f"{exc} — 서버 관리 페이지에서 Riot API 키를 설정해주세요.") from exc
+            raise AppError(str(exc)) from exc
         except requests.exceptions.RequestException as exc:
             raise AppError(f"Riot API 조회 실패: {exc}") from exc
         if rank is None:

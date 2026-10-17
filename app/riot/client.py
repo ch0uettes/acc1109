@@ -69,20 +69,23 @@ class RiotAPIClient(ABC):
         ...
 
 
+RIOT_KEY_MISSING_MESSAGE = "Riot API 키가 설정되지 않았습니다 - 서버 관리 → Riot API 키에서 저장해주세요."
+
+
 class NotImplementedRiotAPIClient(RiotAPIClient):
     """Bound when no RIOT_API_KEY is configured. Fails loudly instead of silently."""
 
     def get_account_by_riot_id(self, game_name: str, tag_line: str) -> RiotAccount:
-        raise NotImplementedError("RIOT_API_KEY is not configured")
+        raise NotImplementedError(RIOT_KEY_MISSING_MESSAGE)
 
     def get_rank(self, puuid: str) -> Optional[RankInfo]:
-        raise NotImplementedError("RIOT_API_KEY is not configured")
+        raise NotImplementedError(RIOT_KEY_MISSING_MESSAGE)
 
     def has_ranked_solo_history(self, puuid: str) -> bool:
-        raise NotImplementedError("RIOT_API_KEY is not configured")
+        raise NotImplementedError(RIOT_KEY_MISSING_MESSAGE)
 
     def get_match_history(self, puuid: str, count: int = 20, start: int = 0) -> list[MatchHistoryEntry]:
-        raise NotImplementedError("RIOT_API_KEY is not configured")
+        raise NotImplementedError(RIOT_KEY_MISSING_MESSAGE)
 
     def get_champion_mastery(self, puuid: str) -> list[ChampionMasteryEntry]:
         raise NotImplementedError("Champion mastery lookup is not implemented yet")
@@ -97,6 +100,34 @@ def _convert_riot_rank(riot_tier: str, riot_division: str, riot_lp: int) -> tupl
     if riot_tier == "MASTER":
         return Tier.MASTER, Division.IV, riot_lp
     return Tier(riot_tier), Division(riot_division), riot_lp
+
+
+class RiotAPIError(requests.HTTPError):
+    """A non-2xx Riot API response, carrying an operator-readable Korean
+    reason instead of requests' raw "403 Client Error: Forbidden for url"
+    text - which is what the UI used to show, giving no hint that the real
+    cause is usually an expired 24h development key. Still an HTTPError,
+    so every existing `except requests.exceptions.RequestException`
+    (position inference, refresh) keeps treating it the same way."""
+
+    def __init__(self, status_code: int, response: requests.Response | None = None) -> None:
+        self.status_code = status_code
+        super().__init__(riot_error_message(status_code), response=response)
+
+
+def riot_error_message(status_code: int) -> str:
+    if status_code in (401, 403):
+        return (
+            "Riot API 키가 만료되었거나 유효하지 않습니다 - 서버 관리 → Riot API 키에서 새 키를 저장해주세요. "
+            "(개발용 키는 발급 후 24시간마다 만료됩니다)"
+        )
+    if status_code == 404:
+        return "해당 Riot ID를 찾을 수 없습니다 - 게임 이름과 태그(# 뒤)를 확인해주세요."
+    if status_code == 429:
+        return "Riot API 호출 한도를 초과했습니다 - 잠시 후 다시 시도해주세요."
+    if status_code >= 500:
+        return f"Riot API 서버 오류입니다 (상태 코드 {status_code}) - 잠시 후 다시 시도해주세요."
+    return f"Riot API 요청이 실패했습니다 (상태 코드 {status_code})."
 
 
 class LiveRiotAPIClient(RiotAPIClient):
@@ -136,9 +167,18 @@ class LiveRiotAPIClient(RiotAPIClient):
                     wait_seconds = self.RATE_LIMIT_DEFAULT_WAIT_SECONDS
                 time.sleep(wait_seconds)
                 continue
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as exc:
+                raise RiotAPIError(response.status_code, response=response) from exc
             return response.json()
         raise AssertionError("unreachable")  # loop always returns or raises on its final iteration
+
+    def check_api_key(self) -> None:
+        """Raises RiotAPIError if the key is rejected. Uses the platform
+        status endpoint: it needs a valid key but no particular account,
+        so an expired development key shows up without a real lookup."""
+        self._get(f"https://{self.platform}.api.riotgames.com/lol/status/v4/platform-data")
 
     def get_account_by_riot_id(self, game_name: str, tag_line: str) -> RiotAccount:
         # game_name/tag_line are raw operator input dropped straight into a

@@ -264,3 +264,64 @@ def test_riot_api_key_is_stored_in_the_db_and_never_returned_in_full(client, db_
     assert key not in res.text
     with db_factory() as session:
         assert resolve_riot_api_key(session) == key
+
+
+def test_riot_lookup_failures_reach_the_client_as_readable_errors(client, monkeypatch):
+    from app.riot.client import RiotAPIError
+    from app.services.player_service import PlayerService
+
+    server_id, owner_token = _create_server(client)
+    body = {"game_name": "Hide on bush", "tag_line": "KR1"}
+
+    def expired_key(self, game_name, tag_line):
+        raise RiotAPIError(403)
+
+    monkeypatch.setattr(PlayerService, "probe_current_season", expired_key)
+    res = client.post(f"/servers/{server_id}/players/probe", json=body, headers=_auth(owner_token))
+    assert res.status_code == 502
+    assert "만료" in res.json()["detail"]
+
+    def no_such_account(self, game_name, tag_line):
+        raise RiotAPIError(404)
+
+    monkeypatch.setattr(PlayerService, "probe_current_season", no_such_account)
+    res = client.post(f"/servers/{server_id}/players/probe", json=body, headers=_auth(owner_token))
+    assert res.status_code == 404
+    assert "찾을 수 없습니다" in res.json()["detail"]
+
+
+def test_probe_without_any_riot_key_says_so(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr("app.riot.client.settings", dataclasses.replace(settings, riot_api_key=None))
+    server_id, owner_token = _create_server(client)
+
+    res = client.post(
+        f"/servers/{server_id}/players/probe",
+        json={"game_name": "Hide on bush", "tag_line": "KR1"},
+        headers=_auth(owner_token),
+    )
+
+    assert res.status_code == 503
+    assert "Riot API 키가 설정되지 않았습니다" in res.json()["detail"]
+
+
+def test_owner_can_check_whether_the_riot_key_still_works(client, monkeypatch):
+    from app.riot.client import LiveRiotAPIClient, RiotAPIError
+
+    server_id, owner_token = _create_server(client)
+    player_token = _login(client, server_id, "홍길동").json()["token"]
+    client.put(f"/servers/{server_id}/riot-api-key", json={"api_key": "RGAPI-test-only"}, headers=_auth(owner_token))
+
+    assert client.post(f"/servers/{server_id}/riot-api-key/check", headers=_auth(player_token)).status_code == 403
+
+    def expired(self):
+        raise RiotAPIError(403)
+
+    monkeypatch.setattr(LiveRiotAPIClient, "check_api_key", expired)
+    res = client.post(f"/servers/{server_id}/riot-api-key/check", headers=_auth(owner_token))
+    assert res.status_code == 200 and res.json()["valid"] is False and "만료" in res.json()["detail"]
+
+    monkeypatch.setattr(LiveRiotAPIClient, "check_api_key", lambda self: None)
+    res = client.post(f"/servers/{server_id}/riot-api-key/check", headers=_auth(owner_token))
+    assert res.json()["valid"] is True

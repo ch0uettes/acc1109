@@ -204,6 +204,18 @@ def riot_api_key_status(
     return RiotApiKeyStatus(**ServerService(db).riot_api_key_status())
 
 
+class RiotApiKeyCheck(BaseModel):
+    valid: bool
+    detail: str
+
+
+@router.post("/{server_id}/riot-api-key/check", response_model=RiotApiKeyCheck)
+def check_riot_api_key(
+    server_id: int, db: Session = Depends(get_db), actor: ServerMembership = Depends(get_actor)
+) -> RiotApiKeyCheck:
+    return RiotApiKeyCheck(**ServerService(db).check_riot_api_key(server_id, actor.display_name))
+
+
 @router.put("/{server_id}/riot-api-key", response_model=RiotApiKeyStatus)
 def set_riot_api_key(
     server_id: int,

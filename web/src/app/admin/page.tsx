@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   api,
-  ApiError,
   ConstraintInfo,
   HardConstraintConfig,
   NormalizationConfig,
@@ -88,7 +87,7 @@ export default function AdminPage() {
       setInfo(successMsg);
       refresh();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -245,6 +244,18 @@ export default function AdminPage() {
               disabled={busy || !riotKeyInput.trim()}
             >
               저장
+            </button>
+            <button
+              className="secondary"
+              onClick={() =>
+                run(async () => {
+                  const result = await api.checkRiotApiKey(serverId);
+                  if (!result.valid) throw new Error(result.detail);
+                }, "Riot API 키가 정상적으로 동작합니다.")
+              }
+              disabled={busy || !riotKeyStatus?.configured}
+            >
+              키 확인
             </button>
           </div>
         </div>
