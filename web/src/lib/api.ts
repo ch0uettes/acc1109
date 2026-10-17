@@ -333,6 +333,8 @@ export const api = {
       body: { target_display_name: targetDisplayName, new_display_name: newDisplayName },
     }),
   riotApiKeyStatus: (serverId: number) => request<RiotApiKeyStatus>(`/servers/${serverId}/riot-api-key`),
+  checkRiotApiKey: (serverId: number) =>
+    request<{ valid: boolean; detail: string }>(`/servers/${serverId}/riot-api-key/check`, { method: "POST" }),
   setRiotApiKey: (serverId: number, apiKey: string) =>
     request<RiotApiKeyStatus>(`/servers/${serverId}/riot-api-key`, { method: "PUT", body: { api_key: apiKey } }),
   resetMemberPin: (serverId: number, targetDisplayName: string) =>

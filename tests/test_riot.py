@@ -10,6 +10,7 @@ from app.riot.client import (
     CHALLENGER_LP_OFFSET,
     GRANDMASTER_LP_OFFSET,
     LiveRiotAPIClient,
+    RiotAPIError,
     _convert_riot_rank,
 )
 from app.utils.enums import Division, Tier
@@ -205,3 +206,25 @@ def test_get_match_history_skips_a_match_missing_the_queried_puuid():
 
     assert [e.match_id for e in entries] == ["KR_2"]
     assert entries[0].position.value == "MID"
+
+
+@pytest.mark.parametrize(
+    "status_code, expected",
+    [
+        (403, "만료되었거나 유효하지 않습니다"),  # expired/invalid key - Riot answers 403
+        (401, "만료되었거나 유효하지 않습니다"),
+        (404, "Riot ID를 찾을 수 없습니다"),
+        (503, "Riot API 서버 오류"),
+    ],
+)
+def test_error_responses_raise_a_readable_korean_reason(status_code, expected):
+    client = LiveRiotAPIClient(api_key="fake-key")
+
+    with patch("app.riot.client.requests.get", return_value=_response(status_code)):
+        with pytest.raises(RiotAPIError) as exc_info:
+            client.get_account_by_riot_id("Hide on bush", "KR1")
+
+    assert expected in str(exc_info.value)
+    assert exc_info.value.status_code == status_code
+    # Still an HTTPError, so existing RequestException handlers keep working.
+    assert isinstance(exc_info.value, requests.HTTPError)

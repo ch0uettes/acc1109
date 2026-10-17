@@ -21,7 +21,7 @@ from app.database.repositories.server_repository import ServerRepository
 from app.models.role_change import RoleChange
 from app.models.server import Server
 from app.models.server_membership import ServerMembership
-from app.riot.client import resolve_riot_api_key
+from app.riot.client import LiveRiotAPIClient, RiotAPIError, resolve_riot_api_key
 from app.services.rbac import Permission, require_permission
 from app.utils.enums import Role
 from app.utils.exceptions import (
@@ -350,6 +350,19 @@ class ServerService:
             "source": "db" if stored else ("env" if active else None),
             "last4": active[-4:] if active else None,
         }
+
+    def check_riot_api_key(self, server_id: int, actor_display_name: str) -> dict[str, str | bool]:
+        """Owner only. One real call to Riot with the active key."""
+        actor = self._require_member(server_id, actor_display_name)
+        require_permission(actor.role, Permission.MANAGE_SERVER_SETTINGS)
+        api_key = resolve_riot_api_key(self.app_setting_repo.session)
+        if not api_key:
+            return {"valid": False, "detail": "Riot API 키가 설정되지 않았습니다."}
+        try:
+            LiveRiotAPIClient(api_key=api_key).check_api_key()
+        except RiotAPIError as exc:
+            return {"valid": False, "detail": str(exc)}
+        return {"valid": True, "detail": "Riot API 키가 정상적으로 동작합니다."}
 
     def set_riot_api_key(self, server_id: int, actor_display_name: str, api_key: str) -> dict[str, str | bool | None]:
         """Owner only. The key is deployment-wide (one Riot app serves
