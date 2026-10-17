@@ -11,6 +11,7 @@ from app.riot.client import (
     GRANDMASTER_LP_OFFSET,
     LiveRiotAPIClient,
     RiotAPIError,
+    RiotTimeBudgetExceeded,
     _convert_riot_rank,
 )
 from app.utils.enums import Division, Tier
@@ -228,3 +229,50 @@ def test_error_responses_raise_a_readable_korean_reason(status_code, expected):
     assert exc_info.value.status_code == status_code
     # Still an HTTPError, so existing RequestException handlers keep working.
     assert isinstance(exc_info.value, requests.HTTPError)
+
+
+# --- time budget: a whole position inference must fit in one serverless
+# request (Vercel kills it at 30s, which the browser shows as "Failed to
+# fetch") ---
+
+
+def test_no_request_is_started_once_the_deadline_has_passed():
+    client = LiveRiotAPIClient(api_key="fake-key")
+    client.deadline = 100.0
+
+    with patch("app.riot.client.time.monotonic", return_value=101.0):
+        with patch("app.riot.client.requests.get") as mock_get:
+            with pytest.raises(RiotTimeBudgetExceeded):
+                client.get_account_by_riot_id("Hide on bush", "KR1")
+
+    mock_get.assert_not_called()
+    assert isinstance(RiotTimeBudgetExceeded(), requests.exceptions.RequestException)
+
+
+def test_rate_limit_wait_longer_than_the_remaining_budget_fails_fast():
+    client = LiveRiotAPIClient(api_key="fake-key")
+    client.deadline = 105.0
+
+    with patch("app.riot.client.time.monotonic", return_value=100.0):
+        with patch("app.riot.client.requests.get", return_value=_response(429, headers={"Retry-After": "60"})):
+            with patch("app.riot.client.time.sleep") as mock_sleep:
+                with pytest.raises(RiotAPIError) as exc_info:
+                    client.get_account_by_riot_id("Hide on bush", "KR1")
+
+    mock_sleep.assert_not_called()
+    assert exc_info.value.status_code == 429
+
+
+def test_match_history_returns_the_games_read_before_the_budget_ran_out():
+    puuid = "some-puuid"
+    client = LiveRiotAPIClient(api_key="fake-key")
+    client.deadline = 100.0
+    # ids call + KR_1 detail fit in the budget; KR_2's detail does not.
+    clock = iter([90.0, 95.0, 101.0])
+
+    with patch("app.riot.client.time.monotonic", side_effect=lambda: next(clock)):
+        with patch("app.riot.client.requests.get", side_effect=_mock_get_for(puuid, {"KR_1": "TOP", "KR_2": "JUNGLE"})):
+            with patch("app.riot.client.time.sleep"):
+                entries = client.get_match_history(puuid, count=2)
+
+    assert [e.match_id for e in entries] == ["KR_1"]

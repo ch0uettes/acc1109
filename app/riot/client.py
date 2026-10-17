@@ -20,7 +20,18 @@ RANKED_SOLO_QUEUE_ID = 420  # Match-V5 numeric queue id for ranked solo/duo
 # Personal/dev Riot API keys are rate-limited (~20 req/s, 100 req/2min).
 # Match-V5 detail lookups are one request per match, so a short delay
 # between them keeps a whole-roster position scan from tripping a 429.
-MATCH_DETAIL_REQUEST_DELAY_SECONDS = 1.3
+# Short pause between match-detail requests. It used to be 1.3s to stay
+# under a dev key's 100 req/2min on its own, but 20 matches then took 26s+
+# and every position inference blew Vercel's 30s function limit (observed
+# in production as "Failed to fetch"). Bursts are now absorbed by the 429
+# Retry-After handling in _get instead, bounded by the caller's deadline.
+MATCH_DETAIL_REQUEST_DELAY_SECONDS = 0.05
+
+
+class RiotTimeBudgetExceeded(requests.exceptions.Timeout):
+    """The caller's time budget (LiveRiotAPIClient.deadline) ran out. A
+    requests Timeout, so callers that already treat any RequestException
+    as "stop and use what was gathered" handle it without changes."""
 
 _TEAM_POSITION_MAP: dict[str, Position] = {
     "TOP": Position.TOP,
@@ -156,15 +167,30 @@ class LiveRiotAPIClient(RiotAPIClient):
         self.api_key = api_key
         self.platform = platform
         self.region = region
+        # time.monotonic() value after which no new request is started -
+        # set by callers running inside a serverless request (see
+        # PlayerService.infer_position). None means no limit.
+        self.deadline: Optional[float] = None
+
+    def _seconds_left(self) -> Optional[float]:
+        return None if self.deadline is None else self.deadline - time.monotonic()
 
     def _get(self, url: str) -> dict | list:
         for attempt in range(self.RATE_LIMIT_MAX_RETRIES + 1):
+            seconds_left = self._seconds_left()
+            if seconds_left is not None and seconds_left <= 0:
+                raise RiotTimeBudgetExceeded("Riot API time budget exhausted")
             response = requests.get(url, headers={"X-Riot-Token": self.api_key}, timeout=10)
             if response.status_code == 429 and attempt < self.RATE_LIMIT_MAX_RETRIES:
                 try:
                     wait_seconds = float(response.headers.get("Retry-After", self.RATE_LIMIT_DEFAULT_WAIT_SECONDS))
                 except ValueError:
                     wait_seconds = self.RATE_LIMIT_DEFAULT_WAIT_SECONDS
+                seconds_left = self._seconds_left()
+                if seconds_left is not None and wait_seconds >= seconds_left:
+                    # Waiting out the rate limit would overrun the budget -
+                    # fail now rather than get killed mid-sleep.
+                    raise RiotAPIError(429, response=response)
                 time.sleep(wait_seconds)
                 continue
             try:
@@ -230,7 +256,14 @@ class LiveRiotAPIClient(RiotAPIClient):
         entries: list[MatchHistoryEntry] = []
         for match_id in match_ids:
             detail_url = f"https://{self.region}.api.riotgames.com/lol/match/v5/matches/{match_id}"
-            detail = self._get(detail_url)
+            try:
+                detail = self._get(detail_url)
+            except RiotTimeBudgetExceeded:
+                # Out of time mid-batch: the games already read are still a
+                # valid (smaller) sample - return them instead of nothing.
+                if entries:
+                    return entries
+                raise
             participant = next((p for p in detail["info"]["participants"] if p["puuid"] == puuid), None)
             if participant is None:
                 # match_id came from this exact puuid's own /ids lookup, so

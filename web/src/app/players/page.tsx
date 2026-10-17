@@ -33,6 +33,18 @@ const POSITIONS: Position[] = ["TOP", "JUNGLE", "MID", "ADC", "SUPPORT"];
 
 type Tab = "manual" | "riot" | "bulk";
 
+// Position inference is reference-only - a failure (slow match history,
+// Riot rate limit) must not throw away the Riot ID lookup that already
+// succeeded, so it degrades to "no recommendation" and the operator picks
+// the position by hand.
+async function inferPositionOrNull(serverId: number, puuid: string): Promise<RoleRecommendation | null> {
+  try {
+    return await api.inferPositionByPuuid(serverId, puuid);
+  } catch {
+    return null;
+  }
+}
+
 export default function PlayersPage() {
   const router = useRouter();
   const { serverId, actorName, loaded } = useSession();
@@ -134,9 +146,9 @@ export default function PlayersPage() {
     setError(null);
     try {
       const { puuid, current } = await api.probeCurrentSeason(serverId, gameName, tagLine);
-      const rec = await api.inferPositionByPuuid(serverId, puuid);
       setProbePuuid(puuid);
       setProbeCurrent(current);
+      const rec = await inferPositionOrNull(serverId, puuid);
       setRecommendation(rec);
       setRiotMainRole(rec?.main ?? "MID");
     } catch (e) {
@@ -202,7 +214,7 @@ export default function PlayersPage() {
       for (const row of bulkRows) {
         try {
           const { puuid, current } = await api.probeCurrentSeason(serverId, row.game_name, row.tag_line);
-          const rec = await api.inferPositionByPuuid(serverId, puuid);
+          const rec = await inferPositionOrNull(serverId, puuid);
           await api.registerPlayer(serverId, {
             nickname: row.nickname,
             puuid,
@@ -374,7 +386,9 @@ export default function PlayersPage() {
                     {(recommendation.main_ratio * 100).toFixed(0)}%, 표본 {recommendation.sample_size}판)
                   </p>
                 ) : (
-                  <p className="muted">랭크 게임 이력이 없어 포지션을 자동 분석할 수 없습니다.</p>
+                  <p className="muted">
+                    포지션을 자동 분석하지 못했습니다 (랭크 게임 이력 없음 또는 조회 지연) - 아래에서 직접 선택해주세요.
+                  </p>
                 )}
                 <div className="row">
                   <select value={riotMainRole} onChange={(e) => setRiotMainRole(e.target.value as Position)}>
