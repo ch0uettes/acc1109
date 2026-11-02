@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import create_engine, inspect, text  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
 
-from app.config import settings  # noqa: E402
+from app.config import normalize_database_url, settings  # noqa: E402
 
 COLUMNS = (
     ("servers", "join_code_hash"),
@@ -35,7 +35,7 @@ COLUMNS = (
 def main() -> None:
     database_url = sys.argv[1] if len(sys.argv) > 1 else settings.database_url
     print(f"Migrating {make_url(database_url).render_as_string(hide_password=True)}")
-    engine = create_engine(database_url)
+    engine = create_engine(normalize_database_url(database_url))
 
     with engine.begin() as conn:
         inspector = inspect(conn)

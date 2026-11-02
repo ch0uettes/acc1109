@@ -21,6 +21,18 @@ class Settings:
     server_creation_code: Optional[str]
 
 
+def normalize_database_url(url: str) -> str:
+    """SQLAlchemy 2.1 switched the default driver for a bare postgresql://
+    URL from psycopg2 to psycopg (v3), which isn't installed - every
+    requirements.txt here is unpinned, so a rebuild that picked up 2.1
+    crashed on startup with "No module named 'psycopg'". Naming the
+    driver explicitly makes the URL mean the same thing on any version."""
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg2://" + url[len(prefix):]
+    return url
+
+
 def _build_settings() -> Settings:
     base_dir = Path(__file__).resolve().parent.parent
     # Vercel's deployment bundle is read-only outside /tmp (and /tmp is
@@ -40,7 +52,7 @@ def _build_settings() -> Settings:
     # Community Cloud, whose filesystem is wiped on every redeploy) set
     # DATABASE_URL to a persistent hosted Postgres instead (Supabase/Neon
     # free tier) via st.secrets/env - see DEPLOY.md.
-    database_url = os.environ.get("DATABASE_URL") or f"sqlite:///{db_path}"
+    database_url = normalize_database_url(os.environ.get("DATABASE_URL") or f"sqlite:///{db_path}")
     return Settings(
         base_dir=base_dir,
         data_dir=data_dir,

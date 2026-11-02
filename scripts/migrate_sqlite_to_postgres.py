@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import create_engine, select, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-from app.config import settings  # noqa: E402
+from app.config import normalize_database_url, settings  # noqa: E402
 from app.database import entities  # noqa: E402,F401  registers tables on Base.metadata
 from app.database.base import Base  # noqa: E402
 
@@ -51,7 +51,7 @@ def main() -> None:
     print(f"Target: {target_url}")
 
     source_engine = create_engine(settings.database_url)
-    target_engine = create_engine(target_url)
+    target_engine = create_engine(normalize_database_url(target_url))
     Base.metadata.create_all(target_engine)
 
     SourceSession = sessionmaker(bind=source_engine)
