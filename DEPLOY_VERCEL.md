@@ -14,7 +14,13 @@
 acc1109/                 (저장소 루트)
 ├── app/                 Python 백엔드 도메인 로직 (기존 Streamlit 앱과 공유)
 ├── api/index.py         FastAPI Vercel 함수 엔트리포인트
-├── requirements.txt     백엔드 프로젝트가 사용
+├── api/requirements.txt 백엔드 프로젝트가 사용 (Vercel은 함수와 같은 디렉터리의
+│                        requirements.txt를 루트보다 우선함 - fastapi/uvicorn/
+│                        sqlalchemy 등 API에 실제로 필요한 것만 담음)
+├── requirements.txt     Streamlit 앱 + 로컬 테스트용 (streamlit/pandas/pytest 등
+│                        포함 - 이 전체를 Vercel 함수에 그대로 쓰면 pandas가 끌고
+│                        오는 numpy/pyarrow 때문에 번들이 비대해져 cold start가
+│                        크래시남, 실제로 한 번 겪은 문제)
 ├── vercel.json          백엔드 프로젝트 설정 (maxDuration 등)
 └── web/                 Next.js 프론트엔드 (별도 Vercel 프로젝트로 배포)
 ```

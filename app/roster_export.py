@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-import pandas as pd
+from openpyxl import Workbook
 
 from app.models.player import Player
 from app.models.team import SavedTeam
@@ -42,17 +42,26 @@ def saved_teams_to_txt(saved_teams: list[SavedTeam]) -> str:
 def saved_teams_to_xlsx_bytes(saved_teams: list[SavedTeam]) -> bytes:
     """One row per player (팀/포지션/닉네임/티어) - a flat table rather than
     the TXT export's per-team blocks, since that's the shape a spreadsheet
-    is actually useful for (sort/filter by team or position)."""
-    rows = [
-        {
-            "팀": team.index + 1,
-            "포지션": entry.position.value,
-            "닉네임": entry.player.nickname if entry.player else UNKNOWN_PLAYER_LABEL,
-            "티어": tier_label(entry.player),
-        }
-        for team in saved_teams
-        for entry in team.entries
-    ]
+    is actually useful for (sort/filter by team or position).
+
+    Written with openpyxl directly rather than pandas - this module is
+    imported from the FastAPI routers, and pandas (plus its numpy
+    dependency) in that import path was heavy enough to break cold starts
+    on Vercel's Python runtime."""
+    headers = ["팀", "포지션", "닉네임", "티어"]
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(headers)
+    for team in saved_teams:
+        for entry in team.entries:
+            sheet.append(
+                [
+                    team.index + 1,
+                    entry.position.value,
+                    entry.player.nickname if entry.player else UNKNOWN_PLAYER_LABEL,
+                    tier_label(entry.player),
+                ]
+            )
     buffer = io.BytesIO()
-    pd.DataFrame(rows).to_excel(buffer, index=False, engine="openpyxl")
+    workbook.save(buffer)
     return buffer.getvalue()
