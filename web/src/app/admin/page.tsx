@@ -171,7 +171,7 @@ export default function AdminPage() {
           </p>
           <div className="row">
             <input
-              type="password"
+              type="text"
               placeholder="새 입장 코드 (4자 이상)"
               value={newJoinCode}
               onChange={(e) => setNewJoinCode(e.target.value)}
