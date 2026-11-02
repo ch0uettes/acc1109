@@ -4,6 +4,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
+from app.riot.client import RiotAPIError
+
 from app.utils.exceptions import (
     AppError,
     AuthenticationError,
@@ -37,6 +39,19 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
         status_code = _STATUS_BY_ERROR.get(type(exc), 400)
         return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
+    @app.exception_handler(RiotAPIError)
+    async def handle_riot_api_error(request: Request, exc: RiotAPIError) -> JSONResponse:
+        # 404 is the operator's input (no such Riot ID); everything else is
+        # an upstream problem (expired key, rate limit, Riot outage).
+        status_code = 404 if exc.status_code == 404 else 502
+        return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
+    @app.exception_handler(NotImplementedError)
+    async def handle_not_configured(request: Request, exc: NotImplementedError) -> JSONResponse:
+        # Raised by the Riot/OCR placeholder clients when their key or
+        # binary isn't configured - a setup problem, not a crash.
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     @app.exception_handler(IntegrityError)
     async def handle_integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:

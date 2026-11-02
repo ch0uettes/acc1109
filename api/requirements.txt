@@ -6,3 +6,5 @@ psycopg2-binary
 pydantic
 requests
 openpyxl
+Pillow
+beautifulsoup4

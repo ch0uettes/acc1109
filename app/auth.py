@@ -24,7 +24,11 @@ from app.config import settings
 from app.utils.exceptions import AuthenticationError
 
 _PBKDF2_ITERATIONS = 200_000
-TOKEN_TTL_SECONDS = 30 * 24 * 3600
+# Admin tokens carry Owner/Server Admin powers, so they expire sooner;
+# a Player's stays valid for a year so a browser that entered the code
+# once keeps working (changing the entry code still revokes it).
+ADMIN_TOKEN_TTL_SECONDS = 30 * 24 * 3600
+PLAYER_TOKEN_TTL_SECONDS = 365 * 24 * 3600
 
 # Local dev/tests only - _secret() refuses to fall back to this on Vercel,
 # where a guessable signing key would let anyone mint an Owner token.
@@ -60,6 +64,7 @@ class TokenClaims:
     member_id: int
     code_fingerprint: str
     pin_fingerprint: str
+    ttl_seconds: int = ADMIN_TOKEN_TTL_SECONDS
 
 
 def _secret() -> bytes:
@@ -84,7 +89,7 @@ def issue_token(claims: TokenClaims) -> str:
         "m": claims.member_id,
         "c": claims.code_fingerprint,
         "p": claims.pin_fingerprint,
-        "exp": int(time.time()) + TOKEN_TTL_SECONDS,
+        "exp": int(time.time()) + claims.ttl_seconds,
     }
     body = _b64(json.dumps(payload, separators=(",", ":")).encode())
     signature = _b64(hmac.new(_secret(), body.encode(), hashlib.sha256).digest())

@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import create_engine, text  # noqa: E402
 
-from app.config import normalize_database_url, settings  # noqa: E402
+from app.config import pin_postgres_driver, settings  # noqa: E402
 
 INDEX_NAME = "uq_vote_match_voter"
 
@@ -34,7 +34,7 @@ INDEX_NAME = "uq_vote_match_voter"
 def main() -> None:
     database_url = sys.argv[1] if len(sys.argv) > 1 else settings.database_url
     print(f"Migrating {database_url}")
-    engine = create_engine(normalize_database_url(database_url))
+    engine = create_engine(pin_postgres_driver(database_url))
 
     with engine.begin() as conn:
         conn.execute(

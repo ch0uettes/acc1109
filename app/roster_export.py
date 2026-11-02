@@ -24,6 +24,13 @@ def tier_label(player: Player | None) -> str:
     return f"{player.tier.value} {player.division.value}"
 
 
+CAPTAIN_MARK = " [팀장]"
+
+
+def _is_captain(team: SavedTeam, entry) -> bool:
+    return team.captain_player_id is not None and entry.player is not None and entry.player.id == team.captain_player_id
+
+
 def saved_teams_to_txt(saved_teams: list[SavedTeam]) -> str:
     """Plain-text roster, one block per team - meant to be pasted directly
     into Discord/a chat, not parsed back by this app (see app.roster_import
@@ -34,7 +41,8 @@ def saved_teams_to_txt(saved_teams: list[SavedTeam]) -> str:
         lines = [f"{team.index + 1}팀"]
         for entry in team.entries:
             name = entry.player.nickname if entry.player else UNKNOWN_PLAYER_LABEL
-            lines.append(f"{entry.position.value}: {name} ({tier_label(entry.player)})")
+            captain_mark = CAPTAIN_MARK if _is_captain(team, entry) else ""
+            lines.append(f"{entry.position.value}: {name}{captain_mark} ({tier_label(entry.player)})")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + "\n"
 
@@ -44,14 +52,12 @@ def saved_teams_to_xlsx_bytes(saved_teams: list[SavedTeam]) -> bytes:
     the TXT export's per-team blocks, since that's the shape a spreadsheet
     is actually useful for (sort/filter by team or position).
 
-    Written with openpyxl directly rather than pandas - this module is
-    imported from the FastAPI routers, and pandas (plus its numpy
-    dependency) in that import path was heavy enough to break cold starts
-    on Vercel's Python runtime."""
-    headers = ["팀", "포지션", "닉네임", "티어"]
+    Written with openpyxl directly rather than pandas: this module is
+    imported by the FastAPI routers, and pandas would drag numpy into the
+    serverless function's cold start for one small spreadsheet."""
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(headers)
+    sheet.append(["팀", "포지션", "닉네임", "티어", "팀장"])
     for team in saved_teams:
         for entry in team.entries:
             sheet.append(
@@ -60,6 +66,7 @@ def saved_teams_to_xlsx_bytes(saved_teams: list[SavedTeam]) -> bytes:
                     entry.position.value,
                     entry.player.nickname if entry.player else UNKNOWN_PLAYER_LABEL,
                     tier_label(entry.player),
+                    "팀장" if _is_captain(team, entry) else "",
                 ]
             )
     buffer = io.BytesIO()

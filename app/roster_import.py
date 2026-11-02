@@ -7,9 +7,8 @@ input than OCR when the operator already has one (e.g. a Discord export or
 a hand-compiled roster), not a different registration flow.
 
 Pure stdlib csv + openpyxl, deliberately not pandas - this module is
-imported from the FastAPI routers, and pandas (plus its numpy dependency)
-in that import path was heavy enough to break cold starts on Vercel's
-Python runtime.
+imported by the FastAPI routers, and pandas would drag numpy into the
+serverless function's cold start for a few small files.
 """
 from __future__ import annotations
 

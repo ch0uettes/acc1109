@@ -7,11 +7,12 @@ import requests
 
 from app.config import settings
 from app.ocr.parser import (
+    Detection,
     cluster_rows,
     detect_winning_team,
     extract_detail_stats,
+    parse_detections_into_riot_ids,
     parse_rows_into_players,
-    parse_rows_into_riot_ids,
 )
 from app.ocr.schemas import MatchResultData, OCRRiotIdRow
 
@@ -96,6 +97,10 @@ class TesseractOCRExtractor(OCRExtractor):
         self._lang = "+".join(languages or ["kor", "eng"])
 
     def _read_rows(self, image_path: str) -> tuple[list[list[tuple[float, str]]], str]:
+        detections, image_height, raw_text = self._detect(image_path)
+        return cluster_rows(detections, image_height), raw_text
+
+    def _detect(self, image_path: str) -> tuple[list[Detection], float, str]:
         import pytesseract
         from PIL import Image
 
@@ -121,7 +126,7 @@ class TesseractOCRExtractor(OCRExtractor):
             detections.append((bbox, text, float(data["conf"][i])))
 
         raw_text = "\n".join(text for _, text, _ in detections)
-        return cluster_rows(detections, image_height), raw_text
+        return detections, image_height, raw_text
 
     def extract(self, image_path: str, known_nicknames: list[str]) -> MatchResultData:
         rows, raw_text = self._read_rows(image_path)
@@ -139,8 +144,8 @@ class TesseractOCRExtractor(OCRExtractor):
         return extract_detail_stats(rows)
 
     def extract_riot_ids(self, image_path: str) -> list[OCRRiotIdRow]:
-        rows, _raw_text = self._read_rows(image_path)
-        return parse_rows_into_riot_ids(rows)
+        detections, _image_height, _raw_text = self._detect(image_path)
+        return parse_detections_into_riot_ids(detections)
 
 
 class GoogleVisionOCRExtractor(OCRExtractor):
@@ -167,13 +172,37 @@ class GoogleVisionOCRExtractor(OCRExtractor):
         self._api_key = api_key
 
     def _read_rows(self, image_path: str) -> tuple[list[list[tuple[float, str]]], str]:
+        detections, image_height, raw_text = self._detect(image_path)
+        return cluster_rows(detections, image_height), raw_text
+
+    # Below this width, screenshots are upscaled before OCR. A real 507px
+    # wide roster capture lost short trailing characters (the "1" in
+    # "#kr1", whole small Riot IDs) at native size; result-screen captures
+    # are full-resolution (1920px+) and are sent as-is.
+    _UPSCALE_BELOW_WIDTH = 1000
+    _UPSCALE_FACTOR = 2
+
+    @classmethod
+    def _encode_image(cls, image_path: str) -> tuple[str, float]:
+        """Base64 image content for Vision, plus the height of the image
+        actually sent - every returned box is in that image's coordinates."""
+        import io
+
         from PIL import Image
 
         with Image.open(image_path) as img:
-            image_height = img.height
+            if img.width >= cls._UPSCALE_BELOW_WIDTH:
+                with open(image_path, "rb") as f:
+                    return base64.b64encode(f.read()).decode("utf-8"), img.height
+            upscaled = img.convert("RGB").resize(
+                (img.width * cls._UPSCALE_FACTOR, img.height * cls._UPSCALE_FACTOR), Image.LANCZOS
+            )
+        buffer = io.BytesIO()
+        upscaled.save(buffer, format="PNG")
+        return base64.b64encode(buffer.getvalue()).decode("utf-8"), upscaled.height
 
-        with open(image_path, "rb") as f:
-            content = base64.b64encode(f.read()).decode("utf-8")
+    def _detect(self, image_path: str) -> tuple[list[Detection], float, str]:
+        content, image_height = self._encode_image(image_path)
 
         payload = {
             "requests": [
@@ -205,7 +234,7 @@ class GoogleVisionOCRExtractor(OCRExtractor):
             detections.append((bbox, text, 100.0))  # Vision gives no per-word confidence here
 
         raw_text = "\n".join(text for _, text, _ in detections)
-        return cluster_rows(detections, image_height), raw_text
+        return detections, image_height, raw_text
 
     def extract(self, image_path: str, known_nicknames: list[str]) -> MatchResultData:
         rows, raw_text = self._read_rows(image_path)
@@ -223,8 +252,8 @@ class GoogleVisionOCRExtractor(OCRExtractor):
         return extract_detail_stats(rows)
 
     def extract_riot_ids(self, image_path: str) -> list[OCRRiotIdRow]:
-        rows, _raw_text = self._read_rows(image_path)
-        return parse_rows_into_riot_ids(rows)
+        detections, _image_height, _raw_text = self._detect(image_path)
+        return parse_detections_into_riot_ids(detections)
 
 
 def build_ocr_extractor() -> OCRExtractor:

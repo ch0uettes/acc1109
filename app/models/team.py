@@ -6,7 +6,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from app.models.player import Player
-from app.utils.enums import Position
+from app.utils.enums import Division, Position, Tier
 
 
 class TeamSlot(BaseModel):
@@ -65,3 +65,24 @@ class SavedTeam(BaseModel):
 
     index: int
     entries: list[SavedRosterEntry]
+    # The team's highest-tier player (see captain_of) - shown as 팀장.
+    captain_player_id: Optional[int] = None
+
+
+_TIER_ORDER = [Tier.IRON, Tier.BRONZE, Tier.SILVER, Tier.GOLD, Tier.PLATINUM, Tier.EMERALD, Tier.DIAMOND, Tier.MASTER]
+_DIVISION_ORDER = [Division.IV, Division.III, Division.II, Division.I]
+
+
+def tier_strength(player: Player) -> tuple[int, int, int, float]:
+    """Sort key for "who has the highest tier": tier, then division (I is
+    best), then LP (Master has no division, so LP alone decides there).
+    UNRANKED ranks below Iron; ties - including between unranked players,
+    who all share the same key otherwise - fall back to base_rating
+    (official or seed)."""
+    if player.tier not in _TIER_ORDER:
+        return (-1, 0, 0, player.base_rating)
+    return (_TIER_ORDER.index(player.tier), _DIVISION_ORDER.index(player.division), player.lp, player.base_rating)
+
+
+def captain_of(players: list[Player]) -> Optional[Player]:
+    return max(players, key=tier_strength, default=None)

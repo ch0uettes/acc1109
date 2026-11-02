@@ -118,8 +118,9 @@ export default function ServerPickerPage() {
           </button>
         </div>
         <p className="muted">
-          일반 참가자는 입장 코드만 입력하면 됩니다. Owner/관리자는 PIN도 필요하며, PIN이 아직 없다면 이번에
-          입력한 PIN이 새로 설정됩니다.
+          일반 참가자는 입장 코드만 입력하면 되고, 한 번 입장한 브라우저에서는 1년간 다시 입력할 필요가 없습니다
+          (Owner가 입장 코드를 바꾸면 다시 입력). Owner/관리자는 PIN도 필요하며, PIN이 아직 없다면 이번에 입력한
+          PIN이 새로 설정됩니다.
         </p>
       </div>
 

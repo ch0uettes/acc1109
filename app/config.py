@@ -21,16 +21,17 @@ class Settings:
     server_creation_code: Optional[str]
 
 
-def normalize_database_url(url: str) -> str:
-    """SQLAlchemy 2.1 switched the default driver for a bare postgresql://
-    URL from psycopg2 to psycopg (v3), which isn't installed - every
-    requirements.txt here is unpinned, so a rebuild that picked up 2.1
-    crashed on startup with "No module named 'psycopg'". Naming the
-    driver explicitly makes the URL mean the same thing on any version."""
+def pin_postgres_driver(database_url: str) -> str:
+    """Rewrites a driver-less postgres URL (what Supabase hands out) to name
+    psycopg2 explicitly. SQLAlchemy 2.1 changed the default driver for
+    `postgresql://` from psycopg2 to psycopg (v3), and Vercel installs the
+    latest SQLAlchemy - every cold start then crashed with "No module named
+    'psycopg'", since only psycopg2-binary is in requirements.txt. A URL
+    that already names a driver is left alone."""
     for prefix in ("postgresql://", "postgres://"):
-        if url.startswith(prefix):
-            return "postgresql+psycopg2://" + url[len(prefix):]
-    return url
+        if database_url.startswith(prefix):
+            return "postgresql+psycopg2://" + database_url[len(prefix):]
+    return database_url
 
 
 def _build_settings() -> Settings:
@@ -52,7 +53,7 @@ def _build_settings() -> Settings:
     # Community Cloud, whose filesystem is wiped on every redeploy) set
     # DATABASE_URL to a persistent hosted Postgres instead (Supabase/Neon
     # free tier) via st.secrets/env - see DEPLOY.md.
-    database_url = normalize_database_url(os.environ.get("DATABASE_URL") or f"sqlite:///{db_path}")
+    database_url = pin_postgres_driver(os.environ.get("DATABASE_URL") or f"sqlite:///{db_path}")
     return Settings(
         base_dir=base_dir,
         data_dir=data_dir,

@@ -21,7 +21,7 @@ from app.models.decision_log import (
     SearchStatisticsSnapshot,
     VersionMetadataSnapshot,
 )
-from app.models.team import SavedRosterEntry, SavedTeam
+from app.models.team import SavedRosterEntry, SavedTeam, captain_of
 from app.position.signup import PlayerSignup
 from app.services.rbac import Permission, require_permission
 from app.utils.enums import Position, Role
@@ -169,13 +169,20 @@ class TeamService:
         since-deactivated participant still shows up correctly instead of
         silently vanishing from a roster they were genuinely part of."""
         players_by_id = {p.id: p for p in self.player_repo.list(include_inactive=True)}
-        return [
-            SavedTeam(
-                index=team_index,
-                entries=[
+        position_order = list(Position)
+        saved_teams = []
+        for team_index, rows in self.repo.get_run(generated_at):
+            # team_players rows come back in assignment order, not lane
+            # order - always present them TOP/JUNGLE/MID/ADC/SUPPORT.
+            entries = sorted(
+                (
                     SavedRosterEntry(position=Position(position), player=players_by_id.get(player_id))
-                    for player_id, position in entries
-                ],
+                    for player_id, position in rows
+                ),
+                key=lambda entry: position_order.index(entry.position),
             )
-            for team_index, entries in self.repo.get_run(generated_at)
-        ]
+            captain = captain_of([entry.player for entry in entries if entry.player is not None])
+            saved_teams.append(
+                SavedTeam(index=team_index, entries=entries, captain_player_id=captain.id if captain else None)
+            )
+        return saved_teams

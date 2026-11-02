@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import quote
 
 import requests
@@ -11,13 +11,27 @@ from app.config import settings
 from app.riot.schemas import ChampionMasteryEntry, MatchHistoryEntry, RankInfo, RiotAccount
 from app.utils.enums import Division, Position, Tier
 
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
 SOLO_QUEUE = "RANKED_SOLO_5x5"
 RANKED_SOLO_QUEUE_ID = 420  # Match-V5 numeric queue id for ranked solo/duo
 
 # Personal/dev Riot API keys are rate-limited (~20 req/s, 100 req/2min).
 # Match-V5 detail lookups are one request per match, so a short delay
 # between them keeps a whole-roster position scan from tripping a 429.
-MATCH_DETAIL_REQUEST_DELAY_SECONDS = 1.3
+# Short pause between match-detail requests. It used to be 1.3s to stay
+# under a dev key's 100 req/2min on its own, but 20 matches then took 26s+
+# and every position inference blew Vercel's 30s function limit (observed
+# in production as "Failed to fetch"). Bursts are now absorbed by the 429
+# Retry-After handling in _get instead, bounded by the caller's deadline.
+MATCH_DETAIL_REQUEST_DELAY_SECONDS = 0.05
+
+
+class RiotTimeBudgetExceeded(requests.exceptions.Timeout):
+    """The caller's time budget (LiveRiotAPIClient.deadline) ran out. A
+    requests Timeout, so callers that already treat any RequestException
+    as "stop and use what was gathered" handle it without changes."""
 
 _TEAM_POSITION_MAP: dict[str, Position] = {
     "TOP": Position.TOP,
@@ -66,20 +80,23 @@ class RiotAPIClient(ABC):
         ...
 
 
+RIOT_KEY_MISSING_MESSAGE = "Riot API 키가 설정되지 않았습니다 - 서버 관리 → Riot API 키에서 저장해주세요."
+
+
 class NotImplementedRiotAPIClient(RiotAPIClient):
     """Bound when no RIOT_API_KEY is configured. Fails loudly instead of silently."""
 
     def get_account_by_riot_id(self, game_name: str, tag_line: str) -> RiotAccount:
-        raise NotImplementedError("RIOT_API_KEY is not configured")
+        raise NotImplementedError(RIOT_KEY_MISSING_MESSAGE)
 
     def get_rank(self, puuid: str) -> Optional[RankInfo]:
-        raise NotImplementedError("RIOT_API_KEY is not configured")
+        raise NotImplementedError(RIOT_KEY_MISSING_MESSAGE)
 
     def has_ranked_solo_history(self, puuid: str) -> bool:
-        raise NotImplementedError("RIOT_API_KEY is not configured")
+        raise NotImplementedError(RIOT_KEY_MISSING_MESSAGE)
 
     def get_match_history(self, puuid: str, count: int = 20, start: int = 0) -> list[MatchHistoryEntry]:
-        raise NotImplementedError("RIOT_API_KEY is not configured")
+        raise NotImplementedError(RIOT_KEY_MISSING_MESSAGE)
 
     def get_champion_mastery(self, puuid: str) -> list[ChampionMasteryEntry]:
         raise NotImplementedError("Champion mastery lookup is not implemented yet")
@@ -94,6 +111,34 @@ def _convert_riot_rank(riot_tier: str, riot_division: str, riot_lp: int) -> tupl
     if riot_tier == "MASTER":
         return Tier.MASTER, Division.IV, riot_lp
     return Tier(riot_tier), Division(riot_division), riot_lp
+
+
+class RiotAPIError(requests.HTTPError):
+    """A non-2xx Riot API response, carrying an operator-readable Korean
+    reason instead of requests' raw "403 Client Error: Forbidden for url"
+    text - which is what the UI used to show, giving no hint that the real
+    cause is usually an expired 24h development key. Still an HTTPError,
+    so every existing `except requests.exceptions.RequestException`
+    (position inference, refresh) keeps treating it the same way."""
+
+    def __init__(self, status_code: int, response: requests.Response | None = None) -> None:
+        self.status_code = status_code
+        super().__init__(riot_error_message(status_code), response=response)
+
+
+def riot_error_message(status_code: int) -> str:
+    if status_code in (401, 403):
+        return (
+            "Riot API 키가 만료되었거나 유효하지 않습니다 - 서버 관리 → Riot API 키에서 새 키를 저장해주세요. "
+            "(개발용 키는 발급 후 24시간마다 만료됩니다)"
+        )
+    if status_code == 404:
+        return "해당 Riot ID를 찾을 수 없습니다 - 게임 이름과 태그(# 뒤)를 확인해주세요."
+    if status_code == 429:
+        return "Riot API 호출 한도를 초과했습니다 - 잠시 후 다시 시도해주세요."
+    if status_code >= 500:
+        return f"Riot API 서버 오류입니다 (상태 코드 {status_code}) - 잠시 후 다시 시도해주세요."
+    return f"Riot API 요청이 실패했습니다 (상태 코드 {status_code})."
 
 
 class LiveRiotAPIClient(RiotAPIClient):
@@ -122,20 +167,44 @@ class LiveRiotAPIClient(RiotAPIClient):
         self.api_key = api_key
         self.platform = platform
         self.region = region
+        # time.monotonic() value after which no new request is started -
+        # set by callers running inside a serverless request (see
+        # PlayerService.infer_position). None means no limit.
+        self.deadline: Optional[float] = None
+
+    def _seconds_left(self) -> Optional[float]:
+        return None if self.deadline is None else self.deadline - time.monotonic()
 
     def _get(self, url: str) -> dict | list:
         for attempt in range(self.RATE_LIMIT_MAX_RETRIES + 1):
+            seconds_left = self._seconds_left()
+            if seconds_left is not None and seconds_left <= 0:
+                raise RiotTimeBudgetExceeded("Riot API time budget exhausted")
             response = requests.get(url, headers={"X-Riot-Token": self.api_key}, timeout=10)
             if response.status_code == 429 and attempt < self.RATE_LIMIT_MAX_RETRIES:
                 try:
                     wait_seconds = float(response.headers.get("Retry-After", self.RATE_LIMIT_DEFAULT_WAIT_SECONDS))
                 except ValueError:
                     wait_seconds = self.RATE_LIMIT_DEFAULT_WAIT_SECONDS
+                seconds_left = self._seconds_left()
+                if seconds_left is not None and wait_seconds >= seconds_left:
+                    # Waiting out the rate limit would overrun the budget -
+                    # fail now rather than get killed mid-sleep.
+                    raise RiotAPIError(429, response=response)
                 time.sleep(wait_seconds)
                 continue
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as exc:
+                raise RiotAPIError(response.status_code, response=response) from exc
             return response.json()
         raise AssertionError("unreachable")  # loop always returns or raises on its final iteration
+
+    def check_api_key(self) -> None:
+        """Raises RiotAPIError if the key is rejected. Uses the platform
+        status endpoint: it needs a valid key but no particular account,
+        so an expired development key shows up without a real lookup."""
+        self._get(f"https://{self.platform}.api.riotgames.com/lol/status/v4/platform-data")
 
     def get_account_by_riot_id(self, game_name: str, tag_line: str) -> RiotAccount:
         # game_name/tag_line are raw operator input dropped straight into a
@@ -187,7 +256,14 @@ class LiveRiotAPIClient(RiotAPIClient):
         entries: list[MatchHistoryEntry] = []
         for match_id in match_ids:
             detail_url = f"https://{self.region}.api.riotgames.com/lol/match/v5/matches/{match_id}"
-            detail = self._get(detail_url)
+            try:
+                detail = self._get(detail_url)
+            except RiotTimeBudgetExceeded:
+                # Out of time mid-batch: the games already read are still a
+                # valid (smaller) sample - return them instead of nothing.
+                if entries:
+                    return entries
+                raise
             participant = next((p for p in detail["info"]["participants"] if p["puuid"] == puuid), None)
             if participant is None:
                 # match_id came from this exact puuid's own /ids lookup, so
@@ -227,13 +303,28 @@ class LiveRiotAPIClient(RiotAPIClient):
         raise NotImplementedError("Champion mastery lookup is not implemented yet")
 
 
-def build_riot_client() -> RiotAPIClient:
-    """DI entry point: returns a working client if RIOT_API_KEY is set,
-    otherwise a client that fails loudly on first use."""
-    if not settings.riot_api_key:
+def resolve_riot_api_key(session: Session | None = None) -> str | None:
+    """The key saved on the 서버 관리 page (app_settings table) wins over
+    the RIOT_API_KEY env var - a DB value survives serverless cold starts
+    and changes without a redeploy, which an env var doesn't."""
+    if session is not None:
+        from app.database.repositories.app_setting_repository import RIOT_API_KEY, AppSettingRepository
+
+        stored = AppSettingRepository(session).get(RIOT_API_KEY)
+        if stored:
+            return stored
+    return settings.riot_api_key
+
+
+def build_riot_client(session: Session | None = None) -> RiotAPIClient:
+    """DI entry point: returns a working client if a Riot API key is
+    configured (see resolve_riot_api_key), otherwise a client that fails
+    loudly on first use."""
+    api_key = resolve_riot_api_key(session)
+    if not api_key:
         return NotImplementedRiotAPIClient()
     return LiveRiotAPIClient(
-        api_key=settings.riot_api_key,
+        api_key=api_key,
         platform=settings.riot_platform,
         region=settings.riot_region,
     )

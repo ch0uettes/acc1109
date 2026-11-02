@@ -13,6 +13,7 @@ import {
   Tier,
   TierSnapshot,
 } from "@/lib/api";
+import { usePlayerTable } from "@/lib/playerTable";
 import { useSession } from "@/lib/session";
 
 const TIERS: Tier[] = [
@@ -32,11 +33,24 @@ const POSITIONS: Position[] = ["TOP", "JUNGLE", "MID", "ADC", "SUPPORT"];
 
 type Tab = "manual" | "riot" | "bulk";
 
+// Position inference is reference-only - a failure (slow match history,
+// Riot rate limit) must not throw away the Riot ID lookup that already
+// succeeded, so it degrades to "no recommendation" and the operator picks
+// the position by hand.
+async function inferPositionOrNull(serverId: number, puuid: string): Promise<RoleRecommendation | null> {
+  try {
+    return await api.inferPositionByPuuid(serverId, puuid);
+  } catch {
+    return null;
+  }
+}
+
 export default function PlayersPage() {
   const router = useRouter();
   const { serverId, actorName, loaded } = useSession();
 
   const [players, setPlayers] = useState<Player[]>([]);
+  const playerTable = usePlayerTable(players);
   const [includeInactive, setIncludeInactive] = useState(false);
   const [tab, setTab] = useState<Tab>("manual");
   const [error, setError] = useState<string | null>(null);
@@ -132,9 +146,9 @@ export default function PlayersPage() {
     setError(null);
     try {
       const { puuid, current } = await api.probeCurrentSeason(serverId, gameName, tagLine);
-      const rec = await api.inferPositionByPuuid(serverId, puuid);
       setProbePuuid(puuid);
       setProbeCurrent(current);
+      const rec = await inferPositionOrNull(serverId, puuid);
       setRecommendation(rec);
       setRiotMainRole(rec?.main ?? "MID");
     } catch (e) {
@@ -200,7 +214,7 @@ export default function PlayersPage() {
       for (const row of bulkRows) {
         try {
           const { puuid, current } = await api.probeCurrentSeason(serverId, row.game_name, row.tag_line);
-          const rec = await api.inferPositionByPuuid(serverId, puuid);
+          const rec = await inferPositionOrNull(serverId, puuid);
           await api.registerPlayer(serverId, {
             nickname: row.nickname,
             puuid,
@@ -372,7 +386,9 @@ export default function PlayersPage() {
                     {(recommendation.main_ratio * 100).toFixed(0)}%, 표본 {recommendation.sample_size}판)
                   </p>
                 ) : (
-                  <p className="muted">랭크 게임 이력이 없어 포지션을 자동 분석할 수 없습니다.</p>
+                  <p className="muted">
+                    포지션을 자동 분석하지 못했습니다 (랭크 게임 이력 없음 또는 조회 지연) - 아래에서 직접 선택해주세요.
+                  </p>
                 )}
                 <div className="row">
                   <select value={riotMainRole} onChange={(e) => setRiotMainRole(e.target.value as Position)}>
@@ -427,30 +443,44 @@ export default function PlayersPage() {
                       <th>닉네임</th>
                       <th>게임 이름</th>
                       <th>태그</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
                     {bulkRows.map((row, i) => (
                       <tr key={i}>
+                        {(["nickname", "game_name", "tag_line"] as const).map((field) => (
+                          <td key={field}>
+                            <input
+                              value={row[field]}
+                              // OCR misreads are common - every field is
+                              // editable, and an empty one is flagged.
+                              style={row[field].trim() ? undefined : { borderColor: "#e5484d" }}
+                              onChange={(e) => {
+                                const next = [...bulkRows];
+                                next[i] = { ...row, [field]: e.target.value };
+                                setBulkRows(next);
+                              }}
+                            />
+                          </td>
+                        ))}
                         <td>
-                          <input
-                            value={row.nickname}
-                            onChange={(e) => {
-                              const next = [...bulkRows];
-                              next[i] = { ...row, nickname: e.target.value };
-                              setBulkRows(next);
-                            }}
-                          />
+                          <button
+                            className="secondary"
+                            onClick={() => setBulkRows(bulkRows.filter((_, j) => j !== i))}
+                            disabled={busy}
+                          >
+                            삭제
+                          </button>
                         </td>
-                        <td>{row.game_name}</td>
-                        <td>{row.tag_line}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 </div>
                 <p className="muted">
-                  언랭 참가자는 Seed Tier GOLD로 임시 등록됩니다 - 등록 후 목록에서 직접 수정해주세요.
+                  OCR 결과는 원본과 꼭 대조해주세요 - 빨간 칸은 읽지 못한 값입니다. 언랭 참가자는 Seed Tier GOLD로
+                  임시 등록됩니다 - 등록 후 목록에서 직접 수정해주세요.
                 </p>
                 <button onClick={handleBulkRegister} disabled={busy}>
                   일괄 조회 및 추가
@@ -463,31 +493,36 @@ export default function PlayersPage() {
 
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3 style={{ margin: 0 }}>참가자 목록 ({players.length})</h3>
-          <label className="row" style={{ gap: 4 }}>
-            <input
-              type="checkbox"
-              checked={includeInactive}
-              onChange={(e) => setIncludeInactive(e.target.checked)}
-            />
-            비활성 포함
-          </label>
+          <h3 style={{ margin: 0 }}>
+            참가자 목록 ({playerTable.query ? `${playerTable.rows.length} / ${players.length}` : players.length})
+          </h3>
+          <div className="row">
+            {playerTable.searchInput}
+            <label className="row" style={{ gap: 4 }}>
+              <input
+                type="checkbox"
+                checked={includeInactive}
+                onChange={(e) => setIncludeInactive(e.target.checked)}
+              />
+              비활성 포함
+            </label>
+          </div>
         </div>
         <div className="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>닉네임</th>
-              <th>티어</th>
-              <th>포지션</th>
-              <th>Final Rating</th>
-              <th>출처</th>
-              <th>상태</th>
+              {playerTable.sortTh("nickname", "닉네임")}
+              {playerTable.sortTh("tier", "티어")}
+              {playerTable.sortTh("position", "포지션")}
+              {playerTable.sortTh("rating", "Final Rating")}
+              {playerTable.sortTh("source", "출처")}
+              {playerTable.sortTh("status", "상태")}
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {players.map((p) => (
+            {playerTable.rows.map((p) => (
               <tr key={p.id} style={{ opacity: p.is_active ? 1 : 0.5 }}>
                 <td>{p.nickname}</td>
                 <td>
@@ -519,10 +554,10 @@ export default function PlayersPage() {
                 </td>
               </tr>
             ))}
-            {players.length === 0 && (
+            {playerTable.rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
-                  등록된 참가자가 없습니다.
+                  {players.length === 0 ? "등록된 참가자가 없습니다." : "검색 결과가 없습니다."}
                 </td>
               </tr>
             )}
