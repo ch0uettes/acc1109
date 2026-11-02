@@ -37,6 +37,7 @@ export default function StatsPage() {
         {leaderboard.length === 0 ? (
           <p className="muted">데이터가 없습니다.</p>
         ) : (
+          <div className="table-scroll">
           <table>
             <thead>
               <tr>
@@ -55,6 +56,7 @@ export default function StatsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -74,6 +76,7 @@ export default function StatsPage() {
         {decisions.length === 0 ? (
           <p className="muted">아직 저장된 팀 생성 기록이 없습니다.</p>
         ) : (
+          <div className="table-scroll">
           <table>
             <thead>
               <tr>
@@ -100,6 +103,7 @@ export default function StatsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

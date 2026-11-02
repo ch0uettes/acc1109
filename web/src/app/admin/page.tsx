@@ -117,6 +117,7 @@ export default function AdminPage() {
 
       <div className="card">
         <h3>멤버 목록</h3>
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
@@ -135,6 +136,7 @@ export default function AdminPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="card">
@@ -416,6 +418,7 @@ export default function AdminPage() {
         {history.length === 0 ? (
           <p className="muted">아직 역할 변경 이력이 없습니다.</p>
         ) : (
+          <div className="table-scroll">
           <table>
             <thead>
               <tr>
@@ -438,6 +441,7 @@ export default function AdminPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

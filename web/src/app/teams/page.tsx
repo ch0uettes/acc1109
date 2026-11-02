@@ -234,6 +234,7 @@ export default function TeamsPage() {
 
       <div className="card">
         <h3>참가자 선택 (5명 단위, {selected.size}명 선택됨)</h3>
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
@@ -306,6 +307,7 @@ export default function TeamsPage() {
             ))}
           </tbody>
         </table>
+        </div>
         <div className="row" style={{ marginTop: 12 }}>
           <button onClick={handleGenerate} disabled={busy || selected.size === 0}>
             팀 생성
@@ -349,6 +351,7 @@ export default function TeamsPage() {
           </div>
 
           {generateResponse.results[comboIndex].contributions.length > 0 && (
+            <div className="table-scroll">
             <table style={{ marginTop: 12 }}>
               <thead>
                 <tr>
@@ -371,6 +374,7 @@ export default function TeamsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
 
           <div className="row" style={{ marginTop: 12 }}>
