@@ -100,7 +100,7 @@ export default function ServerPickerPage() {
           </select>
           <input placeholder="내 이름" value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
           <input
-            type="password"
+            type="text"
             placeholder="입장 코드"
             value={joinCode}
             onChange={(e) => setJoinCode(e.target.value)}
@@ -134,7 +134,7 @@ export default function ServerPickerPage() {
             onChange={(e) => setOwnerName(e.target.value)}
           />
           <input
-            type="password"
+            type="text"
             placeholder="입장 코드 (4자 이상)"
             value={newJoinCode}
             onChange={(e) => setNewJoinCode(e.target.value)}
@@ -147,7 +147,7 @@ export default function ServerPickerPage() {
             onChange={(e) => setOwnerPin(e.target.value)}
           />
           <input
-            type="password"
+            type="text"
             placeholder="서버 생성 코드"
             value={creationCode}
             onChange={(e) => setCreationCode(e.target.value)}

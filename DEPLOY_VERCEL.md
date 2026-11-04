@@ -14,7 +14,11 @@
 acc1109/                 (저장소 루트)
 ├── app/                 Python 백엔드 도메인 로직 (기존 Streamlit 앱과 공유)
 ├── api/index.py         FastAPI Vercel 함수 엔트리포인트
-├── requirements.txt     백엔드 프로젝트가 사용
+├── api/requirements.txt API에 실제로 필요한 패키지만 (함수 옆에 두면 Vercel이 이 파일을
+│                        쓰는 것으로 알려져 있으나 미검증 - 루트 파일을 쓰더라도 동작은
+│                        같고 설치량만 늘어남). app/ 쪽에 서드파티 import를 추가하면
+│                        여기에도 반드시 추가할 것
+├── requirements.txt     Streamlit 앱 + 로컬 테스트용 (streamlit/pandas/pytest 등)
 ├── vercel.json          백엔드 프로젝트 설정 (maxDuration 등)
 └── web/                 Next.js 프론트엔드 (별도 Vercel 프로젝트로 배포)
 ```

@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+sqlalchemy
+psycopg2-binary
+pydantic
+requests
+openpyxl
+Pillow
+beautifulsoup4

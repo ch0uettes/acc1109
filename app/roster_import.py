@@ -5,13 +5,18 @@ same review-and-edit table in player_page.py's "스크린샷으로 일괄 등록
 before anything is registered - a structured file is just a more reliable
 input than OCR when the operator already has one (e.g. a Discord export or
 a hand-compiled roster), not a different registration flow.
+
+Pure stdlib csv + openpyxl, deliberately not pandas - this module is
+imported by the FastAPI routers, and pandas would drag numpy into the
+serverless function's cold start for a few small files.
 """
 from __future__ import annotations
 
+import csv
 import io
 from pathlib import Path
 
-import pandas as pd
+from openpyxl import load_workbook
 
 from app.ocr.parser import _split_riot_id
 from app.ocr.schemas import OCRRiotIdRow
@@ -50,11 +55,11 @@ class UnsupportedRosterFileError(ValueError):
 def parse_roster_file(data: bytes, filename: str) -> list[OCRRiotIdRow]:
     ext = Path(filename).suffix.lower()
     if ext in (".xlsx", ".xls"):
-        df = pd.read_excel(io.BytesIO(data), dtype=str).fillna("")
-        return [] if df.empty else _rows_from_dataframe(df)
+        records = _records_from_xlsx(data)
+        return [] if not records else _rows_from_records(records)
     if ext == ".csv":
-        df = pd.read_csv(io.BytesIO(data), dtype=str).fillna("")
-        return [] if df.empty else _rows_from_dataframe(df)
+        records = _records_from_delimited(_decode_text(data), ",")
+        return [] if not records else _rows_from_records(records)
     if ext == ".txt":
         return _parse_txt(_decode_text(data))
     raise UnsupportedRosterFileError(f"지원하지 않는 파일 형식입니다: {filename}")
@@ -67,6 +72,42 @@ def _decode_text(data: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="replace")
+
+
+def _records_from_delimited(text: str, delimiter: str) -> list[dict[str, str]]:
+    rows = [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
+    rows = [row for row in rows if any(cell.strip() for cell in row)]
+    if not rows:
+        return []
+    header = rows[0]
+    return [
+        {header[i]: (row[i] if i < len(row) else "") for i in range(len(header))}
+        for row in rows[1:]
+    ]
+
+
+def _records_from_xlsx(data: bytes) -> list[dict[str, str]]:
+    workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    try:
+        rows_iter = workbook.active.iter_rows(values_only=True)
+        try:
+            header_row = next(rows_iter)
+        except StopIteration:
+            return []
+        header = [("" if cell is None else str(cell)) for cell in header_row]
+        records = []
+        for row in rows_iter:
+            if row is None or all(cell is None for cell in row):
+                continue
+            records.append(
+                {
+                    header[i]: ("" if i >= len(row) or row[i] is None else str(row[i]))
+                    for i in range(len(header))
+                }
+            )
+        return records
+    finally:
+        workbook.close()
 
 
 def _parse_txt(text: str) -> list[OCRRiotIdRow]:
@@ -95,8 +136,8 @@ def _parse_txt(text: str) -> list[OCRRiotIdRow]:
 
     delimiter = _detect_line_delimiter(lines)
     if delimiter is not None:
-        df = pd.read_csv(io.StringIO("\n".join(lines)), sep=delimiter, dtype=str).fillna("")
-        return [] if df.empty else _rows_from_dataframe(df)
+        records = _records_from_delimited("\n".join(lines), delimiter)
+        return [] if not records else _rows_from_records(records)
 
     rows: list[OCRRiotIdRow] = []
     for line in lines:
@@ -122,14 +163,15 @@ def _detect_line_delimiter(lines: list[str]) -> str | None:
     return None
 
 
-def _normalize(column: object) -> str:
-    return str(column).strip().lower()
+def _normalize(column: str) -> str:
+    return column.strip().lower()
 
 
-def _rows_from_dataframe(df: pd.DataFrame) -> list[OCRRiotIdRow]:
-    by_normalized_name = {_normalize(c): c for c in df.columns}
+def _rows_from_records(records: list[dict[str, str]]) -> list[OCRRiotIdRow]:
+    columns = list(records[0].keys())
+    by_normalized_name = {_normalize(c): c for c in columns}
 
-    def _find(aliases: set[str]) -> object | None:
+    def _find(aliases: set[str]) -> str | None:
         return next((by_normalized_name[a] for a in aliases if a in by_normalized_name), None)
 
     game_name_col = _find(_GAME_NAME_ALIASES)
@@ -139,16 +181,16 @@ def _rows_from_dataframe(df: pd.DataFrame) -> list[OCRRiotIdRow]:
         nickname_col = _find(_NICKNAME_ALIASES)
         return [
             OCRRiotIdRow(
-                nickname=_cell(row, nickname_col) or _cell(row, game_name_col),
-                game_name=_cell(row, game_name_col),
-                tag_line=_cell(row, tag_line_col),
-                raw_text=_raw_text(row),
+                nickname=_cell(record, nickname_col) or _cell(record, game_name_col),
+                game_name=_cell(record, game_name_col),
+                tag_line=_cell(record, tag_line_col),
+                raw_text=_raw_text(record),
             )
-            for _, row in df.iterrows()
-            if _cell(row, game_name_col) and _cell(row, tag_line_col)
+            for record in records
+            if _cell(record, game_name_col) and _cell(record, tag_line_col)
         ]
 
-    riot_id_col = _find(_RIOT_ID_ALIASES) or _find_combined_riot_id_column(df)
+    riot_id_col = _find(_RIOT_ID_ALIASES) or _find_combined_riot_id_column(records, columns)
     if riot_id_col is None:
         raise UnsupportedRosterFileError(
             "'게임이름#태그' 형식의 라이엇 아이디 열을 찾지 못했습니다. "
@@ -165,43 +207,43 @@ def _rows_from_dataframe(df: pd.DataFrame) -> list[OCRRiotIdRow]:
         # un-split "game#tag" text as the nickname.
         nickname_col = None
     if nickname_col is None:
-        remaining = [c for c in df.columns if c != riot_id_col]
+        remaining = [c for c in columns if c != riot_id_col]
         nickname_col = remaining[0] if remaining else None
 
     rows: list[OCRRiotIdRow] = []
-    for _, row in df.iterrows():
-        raw_id = _cell(row, riot_id_col)
+    for record in records:
+        raw_id = _cell(record, riot_id_col)
         split = _split_riot_id(raw_id)
         if split is None:
             continue
         game_name, tag_line = split
         game_name = game_name or raw_id.split("#", 1)[0].strip()
-        nickname = (_cell(row, nickname_col) if nickname_col is not None else "") or game_name
-        rows.append(OCRRiotIdRow(nickname=nickname, game_name=game_name, tag_line=tag_line, raw_text=_raw_text(row)))
+        nickname = (_cell(record, nickname_col) if nickname_col is not None else "") or game_name
+        rows.append(OCRRiotIdRow(nickname=nickname, game_name=game_name, tag_line=tag_line, raw_text=_raw_text(record)))
     return rows
 
 
-def _find_combined_riot_id_column(df: pd.DataFrame) -> object | None:
+def _find_combined_riot_id_column(records: list[dict[str, str]], columns: list[str]) -> str | None:
     """No column is explicitly named as a Riot ID - find whichever column
     actually holds '#'-formatted values by content instead of guessing
     from a header name that real spreadsheets have used inconsistently."""
     best_col, best_ratio = None, 0.0
-    for col in df.columns:
-        values = df[col].astype(str)
-        non_empty = values[values.str.strip() != ""]
-        if non_empty.empty:
+    for col in columns:
+        non_empty = [record.get(col, "").strip() for record in records]
+        non_empty = [v for v in non_empty if v != ""]
+        if not non_empty:
             continue
-        ratio = non_empty.str.contains("#").mean()
+        ratio = sum(1 for v in non_empty if "#" in v) / len(non_empty)
         if ratio > best_ratio:
             best_col, best_ratio = col, ratio
     return best_col if best_ratio >= _RIOT_ID_CONTENT_RATIO_THRESHOLD else None
 
 
-def _cell(row: pd.Series, col: object | None) -> str:
+def _cell(record: dict[str, str], col: str | None) -> str:
     if col is None:
         return ""
-    return str(row[col]).strip()
+    return record.get(col, "").strip()
 
 
-def _raw_text(row: pd.Series) -> str:
-    return " ".join(str(v).strip() for v in row.values if str(v).strip())
+def _raw_text(record: dict[str, str]) -> str:
+    return " ".join(v.strip() for v in record.values() if v.strip())

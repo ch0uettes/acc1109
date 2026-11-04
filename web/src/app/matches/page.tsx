@@ -168,6 +168,7 @@ export default function MatchesPage() {
 
         {ocrResult && (
           <>
+            <div className="table-scroll">
             <table style={{ marginTop: 12 }}>
               <thead>
                 <tr>
@@ -209,6 +210,7 @@ export default function MatchesPage() {
                 ))}
               </tbody>
             </table>
+            </div>
 
             <div className="row" style={{ marginTop: 8 }}>
               <input type="file" accept="image/*" onChange={(e) => setDetailFile(e.target.files?.[0] ?? null)} />

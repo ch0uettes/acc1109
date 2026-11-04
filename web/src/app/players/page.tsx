@@ -436,6 +436,7 @@ export default function PlayersPage() {
             />
             {bulkRows.length > 0 && (
               <>
+                <div className="table-scroll">
                 <table style={{ marginTop: 12 }}>
                   <thead>
                     <tr>
@@ -476,6 +477,7 @@ export default function PlayersPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
                 <p className="muted">
                   OCR 결과는 원본과 꼭 대조해주세요 - 빨간 칸은 읽지 못한 값입니다. 언랭 참가자는 Seed Tier GOLD로
                   임시 등록됩니다 - 등록 후 목록에서 직접 수정해주세요.
@@ -506,6 +508,7 @@ export default function PlayersPage() {
             </label>
           </div>
         </div>
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
@@ -560,6 +563,7 @@ export default function PlayersPage() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {editDraft && (

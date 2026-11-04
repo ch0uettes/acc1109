@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import FastAPI
@@ -48,11 +49,26 @@ app.include_router(stats.router)
 app.include_router(ocr.router)
 
 
+_logger = logging.getLogger(__name__)
+_db_init_error: str | None = None
+
+
 @app.on_event("startup")
 def _startup() -> None:
-    init_db()
+    # An unreachable database used to abort startup, which Vercel reports
+    # only as an opaque FUNCTION_INVOCATION_FAILED on every route. Keep
+    # serving so /health and each request's JSON error show the real cause.
+    global _db_init_error
+    try:
+        init_db()
+        _db_init_error = None
+    except Exception as exc:
+        _db_init_error = f"{type(exc).__name__}: {exc}"
+        _logger.exception("init_db failed at startup")
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    if _db_init_error is not None:
+        return {"status": "degraded", "database": _db_init_error}
     return {"status": "ok"}

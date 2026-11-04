@@ -123,3 +123,44 @@ td {
   font-size: 12px;
   background: #232838;
 }
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+@media (max-width: 640px) {
+  .nav {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    row-gap: 10px;
+  }
+
+  .nav a {
+    margin-right: 0;
+    padding: 6px 2px;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  button {
+    /* 16px avoids iOS Safari auto-zooming the page on focus */
+    font-size: 16px;
+    padding: 12px 14px;
+    min-height: 44px;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 20px;
+    height: 20px;
+  }
+
+  .row input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  .row select {
+    flex: 1 1 100%;
+  }
+
+  table {
+    font-size: 13px;
+  }
+}
