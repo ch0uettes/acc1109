@@ -10,7 +10,7 @@ export default function Nav() {
 
   return (
     <nav className="nav">
-      <div>
+      <div className="nav-links">
         <Link href="/">서버 선택</Link>
         <Link href="/players">참가자 관리</Link>
         <Link href="/teams">팀 생성</Link>

@@ -37,11 +37,17 @@ a {
   border-bottom: 1px solid var(--border);
 }
 
+.nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
 .nav a {
   color: var(--text);
   text-decoration: none;
-  margin-right: 16px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .card {
@@ -130,14 +136,34 @@ td {
 
 @media (max-width: 640px) {
   .nav {
-    flex-wrap: wrap;
-    gap: 8px 16px;
-    row-gap: 10px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px 12px;
+  }
+
+  .nav > .muted {
+    order: -1;
+    text-align: right;
+  }
+
+  /* Equal columns so the links line up in two tidy rows instead of
+     wrapping wherever the text happens to run out. */
+  .nav-links {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
   }
 
   .nav a {
-    margin-right: 0;
-    padding: 6px 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    font-size: 14px;
+    padding: 0 2px;
+    border-radius: 6px;
+    background: var(--panel);
   }
 
   input:not([type="checkbox"]):not([type="radio"]),
@@ -162,5 +188,12 @@ td {
 
   table {
     font-size: 13px;
+  }
+}
+
+@media (max-width: 360px) {
+  .nav a {
+    font-size: 13px;
+    padding: 0;
   }
 }
