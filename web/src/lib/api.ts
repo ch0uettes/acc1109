@@ -390,7 +390,9 @@ export const api = {
       body: player,
     }),
   refreshPlayerFromRiot: (serverId: number, playerId: number) =>
-    request<Player>(`/servers/${serverId}/players/${playerId}/refresh`, { method: "POST" }),
+    request<{ player: Player; message: string }>(`/servers/${serverId}/players/${playerId}/refresh`, {
+      method: "POST",
+    }),
   probeCurrentSeason: (serverId: number, gameName: string, tagLine: string) =>
     request<{ puuid: string; current: TierSnapshot | null }>(`/servers/${serverId}/players/probe`, {
       method: "POST",

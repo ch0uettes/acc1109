@@ -189,6 +189,14 @@ td {
   table {
     font-size: 13px;
   }
+
+  /* Let a table grow to its content and scroll inside .table-scroll;
+     squeezed to the screen width, cells wrap and action buttons stack
+     until each row is several times taller than its content. */
+  .table-scroll > table {
+    width: max-content;
+    min-width: 100%;
+  }
 }
 
 @media (max-width: 360px) {

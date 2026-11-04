@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   api,
@@ -82,6 +82,13 @@ export default function PlayersPage() {
   const [editTarget, setEditTarget] = useState<Player | null>(null);
   const [editDraft, setEditDraft] = useState<Player | null>(null);
   const [editSeedTier, setEditSeedTier] = useState<Tier>("GOLD");
+
+  // Riot 일괄 새로고침
+  const [refreshSelection, setRefreshSelection] = useState<Set<number>>(new Set());
+  const [refreshProgress, setRefreshProgress] = useState<{ done: number; total: number } | null>(null);
+  const [refreshResults, setRefreshResults] = useState<{ nickname: string; ok: boolean; message: string }[]>([]);
+  const [refreshStopped, setRefreshStopped] = useState(false);
+  const stopRefreshRef = useRef(false);
 
   const refresh = useCallback(() => {
     if (!serverId) return;
@@ -278,18 +285,67 @@ export default function PlayersPage() {
     }
   }
 
-  async function handleRefreshFromRiot(playerId: number) {
+  // One request per player, sequentially: each stays far under Vercel's
+  // 30s limit, Riot's dev-key rate limit isn't burst, and progress shows
+  // as it goes.
+  async function handleBulkRefresh() {
     if (!serverId || !actorName) return;
+    const targets = players.filter((p) => p.puuid && refreshSelection.has(p.id));
+    if (targets.length === 0) return;
     setBusy(true);
     setError(null);
-    try {
-      await api.refreshPlayerFromRiot(serverId, playerId);
-      refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(false);
+    setRefreshResults([]);
+    setRefreshStopped(false);
+    stopRefreshRef.current = false;
+    const results: { nickname: string; ok: boolean; message: string }[] = [];
+    const failed = new Set<number>();
+    for (const p of targets) {
+      if (stopRefreshRef.current) {
+        setRefreshStopped(true);
+        break;
+      }
+      setRefreshProgress({ done: results.length, total: targets.length });
+      try {
+        const { message } = await api.refreshPlayerFromRiot(serverId, p.id);
+        results.push({ nickname: p.nickname, ok: true, message });
+      } catch (e) {
+        failed.add(p.id);
+        results.push({ nickname: p.nickname, ok: false, message: e instanceof ApiError ? e.message : String(e) });
+      }
+      setRefreshResults([...results]);
     }
+    // Leave failures (and anyone not reached before 중지) checked, so a
+    // retry is one click.
+    const attempted = new Set(targets.slice(0, results.length).map((p) => p.id));
+    setRefreshSelection((prev) => new Set([...prev].filter((id) => !attempted.has(id) || failed.has(id))));
+    setRefreshProgress(null);
+    setBusy(false);
+    refresh();
+  }
+
+  const riotRows = playerTable.rows.filter((p) => p.puuid);
+  const allRiotRowsSelected = riotRows.length > 0 && riotRows.every((p) => refreshSelection.has(p.id));
+  const someRiotRowsSelected = riotRows.some((p) => refreshSelection.has(p.id));
+  const selectedRefreshCount = players.filter((p) => p.puuid && refreshSelection.has(p.id)).length;
+
+  function toggleAllRiotRows() {
+    setRefreshSelection((prev) => {
+      const next = new Set(prev);
+      for (const p of riotRows) {
+        if (allRiotRowsSelected) next.delete(p.id);
+        else next.add(p.id);
+      }
+      return next;
+    });
+  }
+
+  function toggleRefreshSelection(playerId: number) {
+    setRefreshSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(playerId)) next.delete(playerId);
+      else next.add(playerId);
+      return next;
+    });
   }
 
   if (!loaded || !serverId || !actorName) return null;
@@ -508,10 +564,63 @@ export default function PlayersPage() {
             </label>
           </div>
         </div>
+        {players.some((p) => p.puuid) && (
+          <div className="row" style={{ marginTop: 8 }}>
+            <button onClick={handleBulkRefresh} disabled={busy || selectedRefreshCount === 0}>
+              Riot 정보 새로고침 ({selectedRefreshCount}명)
+            </button>
+            {refreshProgress ? (
+              <>
+                <span className="muted">
+                  새로고침 중 {refreshProgress.done + 1} / {refreshProgress.total}
+                </span>
+                <button className="secondary" onClick={() => (stopRefreshRef.current = true)}>
+                  중지
+                </button>
+              </>
+            ) : (
+              <span className="muted">왼쪽 체크박스로 Riot 연동 참가자를 고르세요</span>
+            )}
+          </div>
+        )}
+        {refreshResults.length > 0 && !refreshProgress && (
+          <div style={{ marginTop: 8 }}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>
+                새로고침 결과: 성공 {refreshResults.filter((r) => r.ok).length}명, 실패{" "}
+                {refreshResults.filter((r) => !r.ok).length}명{refreshStopped ? " (중지됨)" : ""}
+              </strong>
+              <button className="secondary" onClick={() => setRefreshResults([])}>
+                닫기
+              </button>
+            </div>
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, maxHeight: 200, overflowY: "auto" }}>
+              {refreshResults.map((r, i) => (
+                <li key={i} className={r.ok ? "muted" : "error"}>
+                  {r.ok ? r.message : `${r.nickname}: ${r.message}`}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="table-scroll">
         <table>
           <thead>
             <tr>
+              <th>
+                {riotRows.length > 0 && (
+                  <input
+                    type="checkbox"
+                    aria-label="Riot 연동 참가자 전체 선택"
+                    checked={allRiotRowsSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someRiotRowsSelected && !allRiotRowsSelected;
+                    }}
+                    onChange={toggleAllRiotRows}
+                    disabled={busy}
+                  />
+                )}
+              </th>
               {playerTable.sortTh("nickname", "닉네임")}
               {playerTable.sortTh("tier", "티어")}
               {playerTable.sortTh("position", "포지션")}
@@ -524,6 +633,17 @@ export default function PlayersPage() {
           <tbody>
             {playerTable.rows.map((p) => (
               <tr key={p.id} style={{ opacity: p.is_active ? 1 : 0.5 }}>
+                <td>
+                  {p.puuid && (
+                    <input
+                      type="checkbox"
+                      aria-label={`${p.nickname} 선택`}
+                      checked={refreshSelection.has(p.id)}
+                      onChange={() => toggleRefreshSelection(p.id)}
+                      disabled={busy}
+                    />
+                  )}
+                </td>
                 <td>{p.nickname}</td>
                 <td>
                   {p.tier} {p.division !== "IV" || p.tier !== "UNRANKED" ? p.division : ""} {p.lp}LP
@@ -542,11 +662,6 @@ export default function PlayersPage() {
                     <button className="secondary" onClick={() => startEdit(p)} disabled={busy}>
                       수정
                     </button>
-                    {p.puuid && (
-                      <button className="secondary" onClick={() => handleRefreshFromRiot(p.id)} disabled={busy}>
-                        새로고침
-                      </button>
-                    )}
                     <button className="secondary" onClick={() => handleToggleActive(p)} disabled={busy}>
                       {p.is_active ? "비활성화" : "재활성화"}
                     </button>
@@ -556,7 +671,7 @@ export default function PlayersPage() {
             ))}
             {playerTable.rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="muted">
+                <td colSpan={8} className="muted">
                   {players.length === 0 ? "등록된 참가자가 없습니다." : "검색 결과가 없습니다."}
                 </td>
               </tr>

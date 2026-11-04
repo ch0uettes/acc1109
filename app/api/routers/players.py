@@ -149,15 +149,22 @@ def register_player(
     )
 
 
-@router.post("/{player_id}/refresh", response_model=Player)
+class RefreshResponse(BaseModel):
+    player: Player
+    # e.g. the new rank, or "현재 시즌 언랭" (data left untouched) - the
+    # bulk refresh on the web page lists these per player.
+    message: str
+
+
+@router.post("/{player_id}/refresh", response_model=RefreshResponse)
 def refresh_player(
     server_id: int,
     player_id: int,
     db: Session = Depends(get_db),
     actor: ServerMembership = Depends(get_actor),
-) -> Player:
-    player, _message = _service(server_id, db).refresh_from_riot(player_id, actor.role)
-    return player
+) -> RefreshResponse:
+    player, message = _service(server_id, db).refresh_from_riot(player_id, actor.role)
+    return RefreshResponse(player=player, message=message)
 
 
 @router.put("/{player_id}", response_model=Player)
