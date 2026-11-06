@@ -202,7 +202,7 @@ class BacktrackingSearchEngine(TeamSearchEngine):
     ) -> list[BalanceResult]:
         if len(players) == 0 or len(players) % TEAM_SIZE != 0:
             raise InvalidPlayerCountError(
-                f"Player count must be a positive multiple of {TEAM_SIZE}, got {len(players)}"
+                f"참가자 수는 {TEAM_SIZE}명 단위여야 합니다 (현재 {len(players)}명)"
             )
 
         search_start = time.monotonic()

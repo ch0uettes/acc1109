@@ -47,7 +47,7 @@ async function inferPositionOrNull(serverId: number, puuid: string): Promise<Rol
 
 export default function PlayersPage() {
   const router = useRouter();
-  const { serverId, actorName, loaded } = useSession();
+  const { serverId, actorName, isAdmin, loaded } = useSession();
 
   const [players, setPlayers] = useState<Player[]>([]);
   const playerTable = usePlayerTable(players);
@@ -76,7 +76,11 @@ export default function PlayersPage() {
   const [seedTier, setSeedTier] = useState<Tier>("GOLD");
 
   // 일괄 등록
-  const [bulkRows, setBulkRows] = useState<OCRRiotIdRow[]>([]);
+  // error: why the last attempt failed - failed rows stay for a retry.
+  const [bulkRows, setBulkRows] = useState<(OCRRiotIdRow & { error?: string })[]>([]);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [bulkSummary, setBulkSummary] = useState<string | null>(null);
+  const stopBulkRef = useRef(false);
 
   // 수정 / 삭제
   const [editTarget, setEditTarget] = useState<Player | null>(null);
@@ -205,6 +209,7 @@ export default function PlayersPage() {
           ? await api.extractRiotIds(file)
           : await api.parseRosterFile(serverId, file);
       setBulkRows(rows);
+      setBulkSummary(null);
       if (rows.length === 0) setInfo("파일에서 라이엇 아이디를 찾지 못했습니다.");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -215,38 +220,53 @@ export default function PlayersPage() {
 
   async function handleBulkRegister() {
     if (!serverId || !actorName) return;
+    const rows = bulkRows;
+    if (rows.length === 0) return;
     setBusy(true);
     setError(null);
+    setBulkSummary(null);
+    stopBulkRef.current = false;
     const added: string[] = [];
-    const failed: string[] = [];
-    try {
-      for (const row of bulkRows) {
-        try {
-          const { puuid, current } = await api.probeCurrentSeason(serverId, row.game_name, row.tag_line);
-          const rec = await inferPositionOrNull(serverId, puuid);
-          await api.registerPlayer(serverId, {
-            nickname: row.nickname,
-            puuid,
-            main_role: rec?.main ?? "MID",
-            current,
-            seed_tier: current ? null : "GOLD",
-            recommendation: rec,
-            game_name: row.game_name,
-            tag_line: row.tag_line,
-          });
-          added.push(row.nickname);
-        } catch (e) {
-          failed.push(`${row.nickname}: ${e instanceof ApiError ? e.message : String(e)}`);
-        }
+    const remaining: (OCRRiotIdRow & { error?: string })[] = [];
+    let stopped = false;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (stopBulkRef.current) {
+        stopped = true;
+        remaining.push(...rows.slice(i).map((r) => ({ ...r, error: undefined })));
+        break;
       }
-      setInfo(
-        `${added.length}명 등록 완료` + (failed.length ? ` / ${failed.length}명 실패: ${failed.join(", ")}` : "")
-      );
-      setBulkRows([]);
-      refresh();
-    } finally {
-      setBusy(false);
+      setBulkProgress({ done: i, total: rows.length });
+      try {
+        const { puuid, current } = await api.probeCurrentSeason(serverId, row.game_name, row.tag_line);
+        const rec = await inferPositionOrNull(serverId, puuid);
+        await api.registerPlayer(serverId, {
+          nickname: row.nickname,
+          puuid,
+          main_role: rec?.main ?? "MID",
+          current,
+          seed_tier: current ? null : "GOLD",
+          recommendation: rec,
+          game_name: row.game_name,
+          tag_line: row.tag_line,
+        });
+        added.push(row.nickname);
+      } catch (e) {
+        remaining.push({ ...row, error: e instanceof ApiError ? e.message : String(e) });
+      }
+      // Live view: registered rows drop off, failures show their reason.
+      setBulkRows([...remaining, ...rows.slice(i + 1)]);
     }
+    const failedCount = remaining.filter((r) => r.error).length;
+    setBulkSummary(
+      `${added.length}명 등록 완료` +
+        (failedCount ? `, ${failedCount}명 실패 (아래에서 고쳐서 다시 시도할 수 있습니다)` : "") +
+        (stopped ? ` · 중지됨: ${remaining.length - failedCount}명 남음` : "")
+    );
+    setBulkRows(remaining);
+    setBulkProgress(null);
+    setBusy(false);
+    refresh();
   }
 
   function startEdit(player: Player) {
@@ -363,6 +383,7 @@ export default function PlayersPage() {
       {error && <p className="error">{error}</p>}
       {info && <p className="muted">{info}</p>}
 
+      {isAdmin && (
       <div className="card">
         <div className="row">
           <button className={tab === "manual" ? "" : "secondary"} onClick={() => setTab("manual")}>
@@ -518,10 +539,16 @@ export default function PlayersPage() {
                               style={row[field].trim() ? undefined : { borderColor: "#e5484d" }}
                               onChange={(e) => {
                                 const next = [...bulkRows];
-                                next[i] = { ...row, [field]: e.target.value };
+                                next[i] = { ...row, [field]: e.target.value, error: undefined };
                                 setBulkRows(next);
                               }}
+                              disabled={busy}
                             />
+                            {field === "nickname" && row.error && (
+                              <div className="error" style={{ fontSize: 13, marginTop: 4 }}>
+                                {row.error}
+                              </div>
+                            )}
                           </td>
                         ))}
                         <td>
@@ -542,14 +569,28 @@ export default function PlayersPage() {
                   OCR 결과는 원본과 꼭 대조해주세요 - 빨간 칸은 읽지 못한 값입니다. 언랭 참가자는 Seed Tier GOLD로
                   임시 등록됩니다 - 등록 후 목록에서 직접 수정해주세요.
                 </p>
-                <button onClick={handleBulkRegister} disabled={busy}>
-                  일괄 조회 및 추가
-                </button>
+                <div className="row">
+                  <button onClick={handleBulkRegister} disabled={busy}>
+                    {bulkRows.some((r) => r.error) ? "다시 시도" : "일괄 조회 및 추가"} ({bulkRows.length}명)
+                  </button>
+                  {bulkProgress && (
+                    <>
+                      <span className="muted">
+                        등록 중 {bulkProgress.done + 1} / {bulkProgress.total}
+                      </span>
+                      <button className="secondary" onClick={() => (stopBulkRef.current = true)}>
+                        중지
+                      </button>
+                    </>
+                  )}
+                </div>
               </>
             )}
+            {bulkSummary && !bulkProgress && <p style={{ marginTop: 8 }}>{bulkSummary}</p>}
           </div>
         )}
       </div>
+      )}
 
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
@@ -568,7 +609,7 @@ export default function PlayersPage() {
             </label>
           </div>
         </div>
-        {players.some((p) => p.puuid) && (
+        {isAdmin && players.some((p) => p.puuid) && (
           <div className="row" style={{ marginTop: 8 }}>
             <button onClick={handleBulkRefresh} disabled={busy || selectedRefreshCount === 0}>
               Riot 정보 새로고침 ({selectedRefreshCount}명)
@@ -611,6 +652,7 @@ export default function PlayersPage() {
         <table>
           <thead>
             <tr>
+              {isAdmin && (
               <th>
                 {riotRows.length > 0 && (
                   <input
@@ -625,18 +667,20 @@ export default function PlayersPage() {
                   />
                 )}
               </th>
+              )}
               {playerTable.sortTh("nickname", "닉네임")}
               {playerTable.sortTh("tier", "티어")}
               {playerTable.sortTh("position", "포지션")}
               {playerTable.sortTh("rating", "Final Rating")}
               {playerTable.sortTh("source", "출처")}
               {playerTable.sortTh("status", "상태")}
-              <th></th>
+              {isAdmin && <th></th>}
             </tr>
           </thead>
           <tbody>
             {playerTable.rows.map((p) => (
               <tr key={p.id} style={{ opacity: p.is_active ? 1 : 0.5 }}>
+                {isAdmin && (
                 <td>
                   {p.puuid && (
                     <input
@@ -648,6 +692,7 @@ export default function PlayersPage() {
                     />
                   )}
                 </td>
+                )}
                 <td>{p.nickname}</td>
                 <td>
                   {p.tier} {p.division !== "IV" || p.tier !== "UNRANKED" ? p.division : ""} {p.lp}LP
@@ -661,6 +706,7 @@ export default function PlayersPage() {
                   <span className="badge">{p.rating_source}</span>
                 </td>
                 <td>{p.is_active ? "활성" : "비활성"}</td>
+                {isAdmin && (
                 <td>
                   <div className="row">
                     <button className="secondary" onClick={() => startEdit(p)} disabled={busy}>
@@ -671,11 +717,12 @@ export default function PlayersPage() {
                     </button>
                   </div>
                 </td>
+                )}
               </tr>
             ))}
             {playerTable.rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="muted">
+                <td colSpan={isAdmin ? 8 : 6} className="muted">
                   {players.length === 0 ? "등록된 참가자가 없습니다." : "검색 결과가 없습니다."}
                 </td>
               </tr>

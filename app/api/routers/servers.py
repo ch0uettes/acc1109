@@ -147,6 +147,24 @@ def login(server_id: int, payload: LoginRequest, db: Session = Depends(get_db)) 
     return SessionResponse(token=issue_token(claims), member=member)
 
 
+class NameCheckRequest(BaseModel):
+    display_name: str
+    join_code: str = ""
+
+
+class NameCheckResponse(BaseModel):
+    exists: bool
+    suggestions: list[str]
+
+
+@router.post("/{server_id}/session/check", response_model=NameCheckResponse)
+def check_login_name(server_id: int, payload: NameCheckRequest, db: Session = Depends(get_db)) -> NameCheckResponse:
+    """Before login: is this name new, and does it look like a typo of a
+    known one? Needs the entry code, same as login."""
+    result = ServerService(db).check_name(server_id, payload.display_name, payload.join_code)
+    return NameCheckResponse(**result)
+
+
 @router.get("/{server_id}/me", response_model=ServerMembership)
 def me(actor: ServerMembership = Depends(get_actor)) -> ServerMembership:
     return actor

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError, Match, Player } from "@/lib/api";
+import { api, ApiError, Match, Player, VoteSummary } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { formatUtc } from "@/lib/time";
 
@@ -17,7 +17,9 @@ export default function VotesPage() {
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
   const [voterId, setVoterId] = useState<number | "">("");
   const [votedId, setVotedId] = useState<number | "">("");
-  const [tally, setTallyState] = useState<number | null>(null);
+  const [summary, setSummary] = useState<VoteSummary | null>(null);
+  // Admin's pick when closing: the sole leader by default, chosen by hand on a tie.
+  const [mvpPick, setMvpPick] = useState<number | "">("");
 
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -54,14 +56,20 @@ export default function VotesPage() {
 
   useEffect(() => {
     if (!serverId || !selectedMatchId) {
-      setTallyState(null);
+      setSummary(null);
       return;
     }
     api
-      .tallyVote(serverId, selectedMatchId)
-      .then(setTallyState)
-      .catch(() => setTallyState(null));
+      .voteSummary(serverId, selectedMatchId)
+      .then(setSummary)
+      .catch(() => setSummary(null));
   }, [serverId, selectedMatchId, busy]);
+
+  const leaders = summary?.leader_player_ids ?? [];
+  useEffect(() => {
+    setMvpPick(leaders.length === 1 ? leaders[0] : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaders.join(",")]);
 
   const effectiveVoter = isAdmin ? (voterId === "" ? null : voterId) : meInMatch && me ? me.id : null;
   const onBehalf = isAdmin && effectiveVoter !== null && effectiveVoter !== me?.id;
@@ -87,12 +95,12 @@ export default function VotesPage() {
   }
 
   async function handleConfirmMvp() {
-    if (!serverId || !selectedMatchId || tally === null) return;
+    if (!serverId || !selectedMatchId || mvpPick === "") return;
     setBusy(true);
     setError(null);
     try {
-      await api.setUserMvp(serverId, selectedMatchId, tally);
-      setInfo(`User MVP를 ${nameOf(tally)}(으)로 확정했습니다.`);
+      await api.setUserMvp(serverId, selectedMatchId, mvpPick);
+      setInfo(`User MVP를 ${nameOf(mvpPick)}(으)로 확정했습니다.`);
       setSelectedMatchId(null);
       refresh();
     } catch (e) {
@@ -176,22 +184,63 @@ export default function VotesPage() {
             </div>
           )}
 
-          {selectedMatch && (
+          {selectedMatch && summary && (
             <div style={{ marginTop: 16 }}>
-              <h3>현재 집계</h3>
-              {tally === null ? (
+              <h3>
+                현재 집계{" "}
+                <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>
+                  {summary.voter_player_ids.length} / {summary.participant_count}명 투표
+                </span>
+              </h3>
+              {summary.counts.length === 0 ? (
                 <p className="muted">아직 투표가 없습니다.</p>
               ) : (
-                <>
-                  <p>
-                    현재 1위: <strong>{nameOf(tally)}</strong>
-                  </p>
-                  {isAdmin && (
-                    <button onClick={handleConfirmMvp} disabled={busy}>
-                      투표 마감 및 User MVP 확정
-                    </button>
+                <ul className="vote-counts">
+                  {summary.counts.map((c) => (
+                    <li key={c.player_id}>
+                      <span className="vote-name">
+                        {leaders.includes(c.player_id) ? <strong>{nameOf(c.player_id)}</strong> : nameOf(c.player_id)}
+                      </span>
+                      <span
+                        className="vote-bar"
+                        style={{ width: `${(c.votes / Math.max(...summary.counts.map((x) => x.votes))) * 100}%` }}
+                      />
+                      <span className="vote-num">{c.votes}표</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="muted" style={{ fontSize: 14 }}>
+                투표함:{" "}
+                {summary.voter_player_ids.length ? summary.voter_player_ids.map((id) => nameOf(id)).join(", ") : "없음"}
+                <br />
+                아직 안 함:{" "}
+                {selectedMatch.participants
+                  .map((p) => p.player_id)
+                  .filter((id) => !summary.voter_player_ids.includes(id))
+                  .map((id) => nameOf(id))
+                  .join(", ") || "없음"}
+              </p>
+              {isAdmin && leaders.length > 0 && (
+                <div className="row" style={{ flexWrap: "wrap" }}>
+                  {leaders.length > 1 && (
+                    <select
+                      aria-label="동점자 중 User MVP"
+                      value={mvpPick}
+                      onChange={(e) => setMvpPick(e.target.value ? Number(e.target.value) : "")}
+                    >
+                      <option value="">동점입니다 - User MVP 선택</option>
+                      {leaders.map((id) => (
+                        <option key={id} value={id}>
+                          {nameOf(id)}
+                        </option>
+                      ))}
+                    </select>
                   )}
-                </>
+                  <button onClick={handleConfirmMvp} disabled={busy || mvpPick === ""}>
+                    투표 마감 및 User MVP 확정{mvpPick !== "" ? ` (${nameOf(mvpPick)})` : ""}
+                  </button>
+                </div>
               )}
             </div>
           )}

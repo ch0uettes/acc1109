@@ -207,3 +207,53 @@ def test_an_admin_can_vote_on_someones_behalf(client, server):
     )
     assert res.status_code == 200
     assert res.json()["voter_player_id"] == server["ids"]["p1"]
+
+
+# --- login name check: catch typos before a new account is made ---
+
+
+def test_name_check_needs_the_join_code(client, server):
+    res = client.post(f"/servers/{server['id']}/session/check", json={"display_name": "p0", "join_code": "wrong"})
+    assert res.status_code == 401
+
+
+def test_name_check_known_name_and_typo_suggestions(client, server):
+    check = lambda name: client.post(  # noqa: E731
+        f"/servers/{server['id']}/session/check", json={"display_name": name, "join_code": JOIN}
+    ).json()
+    assert check("Owner") == {"exists": True, "suggestions": []}
+    # A roster nickname with no member yet is still "new", but suggested
+    # for a near spelling - spacing/case-only differences come first.
+    assert check("P 0")["suggestions"][0] == "p0"
+    assert check("owner") == {"exists": False, "suggestions": ["Owner"]}
+    assert check("완전히다른이름") == {"exists": False, "suggestions": []}
+    # Checking creates nothing.
+    members = client.get(f"/servers/{server['id']}/members", headers=_auth(server["owner"])).json()
+    assert [m["display_name"] for m in members] == ["Owner"]
+
+
+# --- vote summary: counts, who voted, ties ---
+
+
+def test_vote_summary_shows_counts_voters_and_ties(client, server):
+    match_id = _record(client, server).json()["id"]
+    ids = server["ids"]
+    url = f"/servers/{server['id']}/matches/{match_id}/votes"
+    summary = lambda: client.get(f"{url}/summary", headers=_auth(server["owner"])).json()  # noqa: E731
+    assert summary() == {"participant_count": 10, "counts": [], "voter_player_ids": [], "leader_player_ids": []}
+
+    for voter, voted in [("p0", "p5"), ("p1", "p6"), ("p2", "p5"), ("p3", "p6")]:
+        res = client.post(
+            url,
+            headers=_auth(server["owner"]),
+            json={"voter_player_id": ids[voter], "voted_player_id": ids[voted]},
+        )
+        assert res.status_code == 200, res.text
+    s = summary()
+    assert sorted(s["leader_player_ids"]) == sorted([ids["p5"], ids["p6"]])
+    assert {c["player_id"]: c["votes"] for c in s["counts"]} == {ids["p5"]: 2, ids["p6"]: 2}
+    assert sorted(s["voter_player_ids"]) == sorted(ids[n] for n in ["p0", "p1", "p2", "p3"])
+
+    # A player can read it too (counts are public, ballots aren't).
+    token = _login(client, server["id"], "p4")
+    assert client.get(f"{url}/summary", headers=_auth(token)).status_code == 200

@@ -96,7 +96,7 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
     def get(self, player_id: int) -> Player:
         entity = self._get_entity(player_id)
         if entity is None or entity.server_id != self.server_id:
-            raise PlayerNotFoundError(f"Player {player_id} not found")
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player_id})")
         return _to_domain(entity)
 
     def get_by_nickname(self, nickname: str) -> Player | None:
@@ -132,7 +132,7 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
             raise PlayerNotFoundError("Cannot update a player without an id")
         entity = self._get_entity(player.id)
         if entity is None or entity.server_id != self.server_id:
-            raise PlayerNotFoundError(f"Player {player.id} not found")
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player.id})")
         _apply_domain(entity, player)
         self.session.commit()
         self.session.refresh(entity)
@@ -143,7 +143,7 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
     ) -> None:
         entity = self._get_entity(player_id)
         if entity is None or entity.server_id != self.server_id:
-            raise PlayerNotFoundError(f"Player {player_id} not found")
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player_id})")
         entity.internal_rating = new_internal_rating
         entity.games_played += 1
         if exit_calibration:
@@ -157,7 +157,7 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
         transaction so a failure leaves neither half applied."""
         entity = self._get_entity(player_id)
         if entity is None or entity.server_id != self.server_id:
-            raise PlayerNotFoundError(f"Player {player_id} not found")
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player_id})")
         entity.internal_rating -= rating_delta
         entity.games_played = max(0, entity.games_played - 1)
         if restore_calibration:
@@ -169,7 +169,7 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
         cascade)."""
         entity = self._get_entity(player_id)
         if entity is None or entity.server_id != self.server_id:
-            raise PlayerNotFoundError(f"Player {player_id} not found")
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player_id})")
         entity.is_active = is_active
         self.session.commit()
         self.session.refresh(entity)

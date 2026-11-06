@@ -46,3 +46,20 @@ def cast_vote(
 @router.get("/tally", response_model=Optional[int])
 def tally_user_mvp(server_id: int, match_id: int, db: Session = Depends(get_db)) -> Optional[int]:
     return VoteService(db, server_id).tally_user_mvp(match_id)
+
+
+class VoteCount(BaseModel):
+    player_id: int
+    votes: int
+
+
+class VoteSummary(BaseModel):
+    participant_count: int
+    counts: list[VoteCount]
+    voter_player_ids: list[int]
+    leader_player_ids: list[int]
+
+
+@router.get("/summary", response_model=VoteSummary)
+def vote_summary(server_id: int, match_id: int, db: Session = Depends(get_db)) -> VoteSummary:
+    return VoteSummary(**VoteService(db, server_id).summary(match_id))

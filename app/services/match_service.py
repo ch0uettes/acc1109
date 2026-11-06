@@ -111,7 +111,7 @@ class MatchService:
         require_permission(actor_role, Permission.CREATE_MATCH)
         match = self.match_repo.get(match_id)
         if match is None:
-            raise MatchNotFoundError(f"Match {match_id} not found")
+            raise MatchNotFoundError(f"존재하지 않는 경기입니다 (#{match_id})")
         reverted = match.revertible
         if reverted:
             for p in match.participants:

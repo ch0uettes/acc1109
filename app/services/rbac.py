@@ -95,4 +95,4 @@ def has_permission(role: Role, permission: Permission) -> bool:
 
 def require_permission(role: Role, permission: Permission) -> None:
     if not has_permission(role, permission):
-        raise PermissionDeniedError(f"{role.value} does not have permission '{permission.value}'")
+        raise PermissionDeniedError("이 작업을 할 권한이 없습니다")

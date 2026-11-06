@@ -275,6 +275,13 @@ export class ApiError extends Error {
   }
 }
 
+export interface VoteSummary {
+  participant_count: number;
+  counts: { player_id: number; votes: number }[];
+  voter_player_ids: number[];
+  leader_player_ids: number[];
+}
+
 // Every call carries the login token (see lib/session.ts) when there is
 // one. A 401 on a call that sent a token means it was revoked or expired
 // (entry code changed, PIN reset, ...) - drop it and send the user back
@@ -325,6 +332,11 @@ export const api = {
     request<SessionResponse>(`/servers/${serverId}/session`, {
       method: "POST",
       body: { display_name: displayName, join_code: joinCode, pin: pin || null },
+    }),
+  checkLoginName: (serverId: number, displayName: string, joinCode: string) =>
+    request<{ exists: boolean; suggestions: string[] }>(`/servers/${serverId}/session/check`, {
+      method: "POST",
+      body: { display_name: displayName, join_code: joinCode },
     }),
   me: (serverId: number) => request<ServerMembership>(`/servers/${serverId}/me`),
   changeOwnPin: (serverId: number, currentPin: string, newPin: string) =>
@@ -533,6 +545,8 @@ export const api = {
   myPlayer: (serverId: number) => request<Player | null>(`/servers/${serverId}/me/player`),
   tallyVote: (serverId: number, matchId: number) =>
     request<number | null>(`/servers/${serverId}/matches/${matchId}/votes/tally`),
+  voteSummary: (serverId: number, matchId: number) =>
+    request<VoteSummary>(`/servers/${serverId}/matches/${matchId}/votes/summary`),
   setUserMvp: (serverId: number, matchId: number, playerId: number) =>
     request<void>(`/servers/${serverId}/matches/${matchId}/user-mvp`, {
       method: "POST",

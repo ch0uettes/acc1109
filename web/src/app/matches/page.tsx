@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError, Match, MatchResultData, OCRPlayerRow, Player, Position, SavedTeam } from "@/lib/api";
 import { POSITION_ORDER } from "@/lib/playerTable";
@@ -54,6 +55,7 @@ export default function MatchesPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [showVoteLink, setShowVoteLink] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(() => {
@@ -117,6 +119,7 @@ export default function MatchesPage() {
 
   async function handleAnalyze() {
     if (!serverId || !file) return;
+    setShowVoteLink(false);
     setBusy(true);
     setError(null);
     try {
@@ -138,6 +141,7 @@ export default function MatchesPage() {
 
   async function handleAnalyzeDetail() {
     if (!detailFile || !ocrResult) return;
+    setShowVoteLink(false);
     setBusy(true);
     setError(null);
     try {
@@ -199,6 +203,7 @@ export default function MatchesPage() {
         match_stats_by_player_id: statsByPlayerId,
       });
       setInfo(`경기를 저장했습니다. AI MVP: ${nameOf(match.ai_mvp_player_id)}`);
+      setShowVoteLink(true);
       setOcrResult(null);
       setFile(null);
       setDetailFile(null);
@@ -214,6 +219,7 @@ export default function MatchesPage() {
 
   async function handleDelete(match: Match) {
     if (!serverId || match.id == null) return;
+    setShowVoteLink(false);
     const message = match.revertible
       ? `경기 #${match.id}을(를) 삭제하면 참가자 ${match.participants.length}명의 레이팅과 게임 수가 이 경기 전으로 돌아가고, 투표도 함께 삭제됩니다. 삭제할까요?`
       : `경기 #${match.id}은(는) 레이팅 변화 기록이 없는 이전 경기라, 레이팅은 그대로 두고 기록과 투표만 삭제합니다. 삭제할까요?`;
@@ -242,7 +248,11 @@ export default function MatchesPage() {
     <div>
       <h1>경기 저장</h1>
       {error && <p className="error">{error}</p>}
-      {info && <p className="muted">{info}</p>}
+      {info && (
+        <p className="muted">
+          {info} {showVoteLink && <Link href="/votes">MVP 투표로 가기 →</Link>}
+        </p>
+      )}
 
       {isAdmin ? (
         runs.length === 0 ? (

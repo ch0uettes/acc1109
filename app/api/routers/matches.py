@@ -110,7 +110,7 @@ def list_pending_votes(server_id: int, db: Session = Depends(get_db)) -> list[Ma
 def get_match(server_id: int, match_id: int, db: Session = Depends(get_db)) -> Match:
     match = _service(server_id, db).get_match(match_id)
     if match is None:
-        raise HTTPException(status_code=404, detail="Match not found")
+        raise HTTPException(status_code=404, detail="존재하지 않는 경기입니다")
     return match
 
 

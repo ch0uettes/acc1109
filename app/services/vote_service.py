@@ -69,3 +69,21 @@ class VoteService:
             return None
         counts = Counter(v.voted_player_id for v in votes)
         return counts.most_common(1)[0][0]
+
+    def summary(self, match_id: int) -> dict[str, object]:
+        """Open tally for the votes screen: votes per candidate, who has
+        voted (never for whom), and every player tied for first - the
+        admin picks among those when closing, instead of tally_user_mvp
+        silently taking whichever tied vote came first."""
+        match = self.match_repo.get(match_id)
+        if match is None:
+            raise MatchNotFoundError("존재하지 않는 경기입니다")
+        votes = self.repo.list_for_match(match_id)
+        counts = Counter(v.voted_player_id for v in votes)
+        top = max(counts.values(), default=0)
+        return {
+            "participant_count": len(match.participants),
+            "counts": [{"player_id": pid, "votes": n} for pid, n in counts.most_common()],
+            "voter_player_ids": [v.voter_player_id for v in votes],
+            "leader_player_ids": [pid for pid, n in counts.most_common() if n == top and top > 0],
+        }

@@ -68,6 +68,7 @@ a {
 input,
 select,
 button {
+  max-width: 100%; /* long option text (match labels) must not push past the card */
   font-size: 14px;
   padding: 8px 10px;
   border-radius: 6px;
@@ -204,4 +205,40 @@ td {
     font-size: 13px;
     padding: 0;
   }
+}
+
+/* Login: "처음 보는 이름입니다" confirmation. */
+.name-prompt {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+/* Votes: per-candidate tally. */
+.vote-counts {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+.vote-counts li {
+  display: grid;
+  grid-template-columns: minmax(80px, 140px) 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.vote-counts .vote-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vote-counts .vote-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--accent);
+  min-width: 4px;
+}
+.vote-counts .vote-num {
+  font-variant-numeric: tabular-nums;
 }

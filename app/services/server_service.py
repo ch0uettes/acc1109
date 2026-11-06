@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError
@@ -267,11 +268,7 @@ class ServerService:
         log in first right after this ships, before anyone else can type
         their name. A name with no membership yet self-registers as a
         Player, same as before, but only once the entry code checks out."""
-        if self.server_repo.get(server_id) is None:
-            raise AuthenticationError("존재하지 않는 서버입니다")
-        code_hash = self.server_repo.get_join_code_hash(server_id)
-        if code_hash is not None and not verify_secret((join_code or "").strip(), code_hash):
-            raise AuthenticationError("입장 코드가 올바르지 않습니다")
+        self._check_join_code(server_id, join_code)
 
         display_name = display_name.strip()
         if not display_name:
@@ -288,6 +285,47 @@ class ServerService:
                 raise AuthenticationError("PIN이 올바르지 않습니다")
 
         return member, self.claims_for(member)
+
+    def _check_join_code(self, server_id: int, join_code: str | None) -> None:
+        if self.server_repo.get(server_id) is None:
+            raise AuthenticationError("존재하지 않는 서버입니다")
+        code_hash = self.server_repo.get_join_code_hash(server_id)
+        if code_hash is not None and not verify_secret((join_code or "").strip(), code_hash):
+            raise AuthenticationError("입장 코드가 올바르지 않습니다")
+
+    def check_name(self, server_id: int, display_name: str, join_code: str | None) -> dict[str, object]:
+        """Before login: is this name already a member, and if not, which
+        known names (members and roster nicknames) look like a typo of it?
+        A new name silently self-registers on login, so a typo would
+        otherwise create a second, unlinked account. Gated on the entry
+        code like login itself, so it reveals nothing to outsiders."""
+        self._check_join_code(server_id, join_code)
+        name = display_name.strip()
+        if not name:
+            raise AuthenticationError("이름을 입력해주세요")
+        if self.get_member(server_id, name) is not None:
+            return {"exists": True, "suggestions": []}
+
+        known: list[str] = []
+        for candidate in [m.display_name for m in self.list_members(server_id)] + [
+            p.nickname for p in PlayerRepository(self.session, server_id).list()
+        ]:
+            if candidate not in known and candidate != name:
+                known.append(candidate)
+
+        def norm(text: str) -> str:
+            return "".join(text.split()).casefold()
+
+        by_norm: dict[str, str] = {}
+        for candidate in known:
+            by_norm.setdefault(norm(candidate), candidate)
+        target = norm(name)
+        # Same name up to spacing/case first, then close spellings.
+        matches = [by_norm[target]] if target in by_norm else []
+        for close in difflib.get_close_matches(target, list(by_norm), n=3, cutoff=0.6):
+            if by_norm[close] not in matches:
+                matches.append(by_norm[close])
+        return {"exists": False, "suggestions": matches[:3]}
 
     def claims_for(self, member: ServerMembership) -> TokenClaims:
         return TokenClaims(
