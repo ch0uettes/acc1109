@@ -15,6 +15,8 @@ def _to_domain(entity: PlayerEntity) -> Player:
         server_id=entity.server_id,
         discord_id=entity.discord_id,
         puuid=entity.puuid,
+        riot_game_name=entity.riot_game_name,
+        riot_tag_line=entity.riot_tag_line,
         nickname=entity.nickname,
         tier=Tier(entity.tier),
         division=Division(entity.division),
@@ -45,6 +47,8 @@ def _to_domain(entity: PlayerEntity) -> Player:
 def _apply_domain(entity: PlayerEntity, player: Player) -> None:
     entity.discord_id = player.discord_id
     entity.puuid = player.puuid
+    entity.riot_game_name = player.riot_game_name
+    entity.riot_tag_line = player.riot_tag_line
     entity.nickname = player.nickname
     entity.tier = player.tier.value
     entity.division = player.division.value
@@ -92,7 +96,7 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
     def get(self, player_id: int) -> Player:
         entity = self._get_entity(player_id)
         if entity is None or entity.server_id != self.server_id:
-            raise PlayerNotFoundError(f"Player {player_id} not found")
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player_id})")
         return _to_domain(entity)
 
     def get_by_nickname(self, nickname: str) -> Player | None:
@@ -128,7 +132,7 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
             raise PlayerNotFoundError("Cannot update a player without an id")
         entity = self._get_entity(player.id)
         if entity is None or entity.server_id != self.server_id:
-            raise PlayerNotFoundError(f"Player {player.id} not found")
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player.id})")
         _apply_domain(entity, player)
         self.session.commit()
         self.session.refresh(entity)
@@ -139,12 +143,25 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
     ) -> None:
         entity = self._get_entity(player_id)
         if entity is None or entity.server_id != self.server_id:
-            raise PlayerNotFoundError(f"Player {player_id} not found")
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player_id})")
         entity.internal_rating = new_internal_rating
         entity.games_played += 1
         if exit_calibration:
             entity.calibration_mode = False
         self.session.commit()
+
+    def revert_match_effect(self, player_id: int, rating_delta: float, restore_calibration: bool) -> None:
+        """Undoes one deleted match's effect on this player: its rating
+        change, the game it counted, and the calibration exit it caused.
+        Does not commit - the caller deletes the match in the same
+        transaction so a failure leaves neither half applied."""
+        entity = self._get_entity(player_id)
+        if entity is None or entity.server_id != self.server_id:
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player_id})")
+        entity.internal_rating -= rating_delta
+        entity.games_played = max(0, entity.games_played - 1)
+        if restore_calibration:
+            entity.calibration_mode = True
 
     def set_active(self, player_id: int, is_active: bool) -> Player:
         """Soft delete/restore - never a hard row delete, see Player.is_active
@@ -152,7 +169,7 @@ class PlayerRepository(BaseRepository[PlayerEntity]):
         cascade)."""
         entity = self._get_entity(player_id)
         if entity is None or entity.server_id != self.server_id:
-            raise PlayerNotFoundError(f"Player {player_id} not found")
+            raise PlayerNotFoundError(f"존재하지 않는 참가자입니다 (#{player_id})")
         entity.is_active = is_active
         self.session.commit()
         self.session.refresh(entity)

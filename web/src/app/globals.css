@@ -37,11 +37,17 @@ a {
   border-bottom: 1px solid var(--border);
 }
 
+.nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
 .nav a {
   color: var(--text);
   text-decoration: none;
-  margin-right: 16px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .card {
@@ -62,6 +68,7 @@ a {
 input,
 select,
 button {
+  max-width: 100%; /* long option text (match labels) must not push past the card */
   font-size: 14px;
   padding: 8px 10px;
   border-radius: 6px;
@@ -130,14 +137,34 @@ td {
 
 @media (max-width: 640px) {
   .nav {
-    flex-wrap: wrap;
-    gap: 8px 16px;
-    row-gap: 10px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px 12px;
+  }
+
+  .nav > .muted {
+    order: -1;
+    text-align: right;
+  }
+
+  /* Equal columns so the links line up in two tidy rows instead of
+     wrapping wherever the text happens to run out. */
+  .nav-links {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
   }
 
   .nav a {
-    margin-right: 0;
-    padding: 6px 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    font-size: 14px;
+    padding: 0 2px;
+    border-radius: 6px;
+    background: var(--panel);
   }
 
   input:not([type="checkbox"]):not([type="radio"]),
@@ -163,4 +190,55 @@ td {
   table {
     font-size: 13px;
   }
+
+  /* Let a table grow to its content and scroll inside .table-scroll;
+     squeezed to the screen width, cells wrap and action buttons stack
+     until each row is several times taller than its content. */
+  .table-scroll > table {
+    width: max-content;
+    min-width: 100%;
+  }
+}
+
+@media (max-width: 360px) {
+  .nav a {
+    font-size: 13px;
+    padding: 0;
+  }
+}
+
+/* Login: "처음 보는 이름입니다" confirmation. */
+.name-prompt {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+/* Votes: per-candidate tally. */
+.vote-counts {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+.vote-counts li {
+  display: grid;
+  grid-template-columns: minmax(80px, 140px) 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.vote-counts .vote-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vote-counts .vote-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--accent);
+  min-width: 4px;
+}
+.vote-counts .vote-num {
+  font-variant-numeric: tabular-nums;
 }

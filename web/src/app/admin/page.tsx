@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   api,
+  Player,
   ConstraintInfo,
   HardConstraintConfig,
   NormalizationConfig,
@@ -14,6 +15,7 @@ import {
   SessionResponse,
 } from "@/lib/api";
 import { readToken, saveSession, useSession } from "@/lib/session";
+import { formatUtc } from "@/lib/time";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -22,6 +24,7 @@ export default function AdminPage() {
 
   const [server, setServer] = useState<Server | null>(null);
   const [members, setMembers] = useState<ServerMembership[]>([]);
+  const [roster, setRoster] = useState<Player[]>([]);
   const [history, setHistory] = useState<RoleChange[]>([]);
   const [constraints, setConstraints] = useState<ConstraintInfo[]>([]);
 
@@ -56,6 +59,7 @@ export default function AdminPage() {
       setHard(s.hard_constraint_config);
     }).catch((e) => setError(String(e)));
     api.listMembers(serverId).then(setMembers).catch(() => undefined);
+    api.listPlayers(serverId).then(setRoster).catch(() => undefined);
     if (isOwner) api.riotApiKeyStatus(serverId).then(setRiotKeyStatus).catch(() => undefined);
     api.roleChangeHistory(serverId).then(setHistory).catch(() => undefined);
     api.listConstraints(serverId).then((list) => {
@@ -131,16 +135,45 @@ export default function AdminPage() {
               <th>이름</th>
               <th>역할</th>
               <th>PIN</th>
+              <th>참가자 연결 (MVP 투표)</th>
             </tr>
           </thead>
           <tbody>
-            {members.map((m) => (
-              <tr key={m.id}>
-                <td>{m.display_name}</td>
-                <td>{m.role}</td>
-                <td>{m.role === "PLAYER" ? "-" : m.has_pin ? "설정됨" : "미설정 (다음 입장 시 설정)"}</td>
-              </tr>
-            ))}
+            {members.map((m) => {
+              const sameName = roster.find((p) => p.nickname === m.display_name.trim());
+              return (
+                <tr key={m.id}>
+                  <td>{m.display_name}</td>
+                  <td>{m.role}</td>
+                  <td>{m.role === "PLAYER" ? "-" : m.has_pin ? "설정됨" : "미설정 (다음 입장 시 설정)"}</td>
+                  <td>
+                    <select
+                      aria-label={`${m.display_name} 참가자 연결`}
+                      value={m.player_id ?? ""}
+                      disabled={busy}
+                      onChange={(e) => {
+                        const playerId = e.target.value ? Number(e.target.value) : null;
+                        run(
+                          () => api.linkMemberPlayer(serverId, m.id, playerId),
+                          playerId === null
+                            ? `${m.display_name}의 연결을 자동(같은 이름)으로 되돌렸습니다.`
+                            : `${m.display_name}을(를) ${roster.find((p) => p.id === playerId)?.nickname}에 연결했습니다.`
+                        );
+                      }}
+                    >
+                      <option value="">
+                        {sameName ? `자동: ${sameName.nickname}` : "자동: 같은 이름 없음 (투표 불가)"}
+                      </option>
+                      {roster.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nickname}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         </div>
@@ -531,7 +564,7 @@ export default function AdminPage() {
             <tbody>
               {[...history].reverse().map((h) => (
                 <tr key={h.id}>
-                  <td>{new Date(h.changed_at).toLocaleString()}</td>
+                  <td>{formatUtc(h.changed_at)}</td>
                   <td>{h.target_display_name}</td>
                   <td>{h.old_role ?? "-"}</td>
                   <td>{h.new_role}</td>

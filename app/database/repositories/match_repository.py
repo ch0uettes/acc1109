@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from app.database.entities.match import MatchEntity, MatchPlayerEntity
+from app.database.entities.vote import VoteEntity
 from app.database.repositories.base import BaseRepository
 from app.models.contribution import ContributionScore
 from app.models.match import Match, MatchPlayerResult
@@ -18,12 +21,16 @@ def _to_domain(entity: MatchEntity) -> Match:
         ai_mvp_player_id=entity.ai_mvp_player_id,
         user_mvp_player_id=entity.user_mvp_player_id,
         note=entity.note,
+        team_run_at=entity.team_run_at,
         participants=[
             MatchPlayerResult(
                 player_id=mp.player_id,
                 team_index=mp.team_index,
                 position=Position(mp.position),
                 contribution=ContributionScore(player_id=mp.player_id, combat=mp.contribution_score),
+                internal_rating_before=mp.internal_rating_before,
+                internal_rating_after=mp.internal_rating_after,
+                exited_calibration=mp.exited_calibration,
             )
             for mp in entity.match_players
         ],
@@ -43,6 +50,7 @@ class MatchRepository(BaseRepository[MatchEntity]):
             ai_mvp_player_id=match.ai_mvp_player_id,
             user_mvp_player_id=match.user_mvp_player_id,
             note=match.note,
+            team_run_at=match.team_run_at,
         )
         entity.match_players = [
             MatchPlayerEntity(
@@ -50,6 +58,9 @@ class MatchRepository(BaseRepository[MatchEntity]):
                 team_index=p.team_index,
                 position=p.position.value,
                 contribution_score=p.contribution.total,
+                internal_rating_before=p.internal_rating_before,
+                internal_rating_after=p.internal_rating_after,
+                exited_calibration=p.exited_calibration,
             )
             for p in match.participants
         ]
@@ -67,6 +78,34 @@ class MatchRepository(BaseRepository[MatchEntity]):
     def list(self) -> list[Match]:
         entities = self.session.query(MatchEntity).filter(MatchEntity.server_id == self.server_id).all()
         return [_to_domain(e) for e in entities]
+
+    def list_recent(self, limit: int = 50) -> list[Match]:
+        entities = (
+            self.session.query(MatchEntity)
+            .filter(MatchEntity.server_id == self.server_id)
+            .order_by(MatchEntity.played_at.desc(), MatchEntity.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return [_to_domain(e) for e in entities]
+
+    def find_by_team_run(self, team_run_at: datetime) -> Match | None:
+        entity = (
+            self.session.query(MatchEntity)
+            .filter(MatchEntity.server_id == self.server_id, MatchEntity.team_run_at == team_run_at)
+            .first()
+        )
+        return _to_domain(entity) if entity is not None else None
+
+    def delete(self, match_id: int) -> None:
+        """Removes the match, its participant rows (cascade) and its votes,
+        which reference the match with no cascade of their own."""
+        entity = self._get_entity(match_id)
+        if entity is None or entity.server_id != self.server_id:
+            return
+        self.session.query(VoteEntity).filter(VoteEntity.match_id == match_id).delete(synchronize_session=False)
+        self.session.delete(entity)
+        self.session.commit()
 
     def list_for_player(self, player_id: int) -> list[Match]:
         return [

@@ -35,25 +35,25 @@ class VoteService:
 
         match = self.match_repo.get(match_id)
         if match is None:
-            raise MatchNotFoundError(f"Match {match_id} not found")
+            raise MatchNotFoundError("존재하지 않는 경기입니다")
         if match.user_mvp_player_id is not None:
             # Guards against a vote landing after an admin already closed
             # voting and confirmed User MVP - without this, a form left
             # open in another tab/session (list_pending_votes only filters
             # at page load) could still insert a vote against a round
             # that's already been tallied and announced.
-            raise InvalidVoteError(f"Match {match_id}'s User MVP vote is already closed")
+            raise InvalidVoteError("이미 투표가 마감된 경기입니다")
 
         participant_ids = {p.player_id for p in match.participants}
         if voter_player_id not in participant_ids:
-            raise InvalidVoteError(f"Player {voter_player_id} is not a participant of match {match_id}")
+            raise InvalidVoteError("이 경기 참가자만 투표할 수 있습니다")
         if voted_player_id not in participant_ids:
-            raise InvalidVoteError(f"Player {voted_player_id} is not a participant of match {match_id}")
+            raise InvalidVoteError("이 경기 참가자에게만 투표할 수 있습니다")
         if voter_player_id == voted_player_id:
             raise InvalidVoteError("자기 자신에게는 투표할 수 없습니다")
 
         if self.repo.get_existing_vote(match_id, voter_player_id) is not None:
-            raise DuplicateVoteError(f"Player {voter_player_id} has already voted for match {match_id}")
+            raise DuplicateVoteError("이미 이 경기에 투표했습니다")
 
         try:
             return self.repo.add(
@@ -61,7 +61,7 @@ class VoteService:
             )
         except IntegrityError as exc:
             self.repo.session.rollback()
-            raise DuplicateVoteError(f"Player {voter_player_id} has already voted for match {match_id}") from exc
+            raise DuplicateVoteError("이미 이 경기에 투표했습니다") from exc
 
     def tally_user_mvp(self, match_id: int) -> int | None:
         votes = self.repo.list_for_match(match_id)
@@ -69,3 +69,21 @@ class VoteService:
             return None
         counts = Counter(v.voted_player_id for v in votes)
         return counts.most_common(1)[0][0]
+
+    def summary(self, match_id: int) -> dict[str, object]:
+        """Open tally for the votes screen: votes per candidate, who has
+        voted (never for whom), and every player tied for first - the
+        admin picks among those when closing, instead of tally_user_mvp
+        silently taking whichever tied vote came first."""
+        match = self.match_repo.get(match_id)
+        if match is None:
+            raise MatchNotFoundError("존재하지 않는 경기입니다")
+        votes = self.repo.list_for_match(match_id)
+        counts = Counter(v.voted_player_id for v in votes)
+        top = max(counts.values(), default=0)
+        return {
+            "participant_count": len(match.participants),
+            "counts": [{"player_id": pid, "votes": n} for pid, n in counts.most_common()],
+            "voter_player_ids": [v.voter_player_id for v in votes],
+            "leader_player_ids": [pid for pid, n in counts.most_common() if n == top and top > 0],
+        }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   api,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/api";
 import { captainId, POSITION_ORDER, usePlayerTable } from "@/lib/playerTable";
 import { useSession } from "@/lib/session";
+import { formatUtc } from "@/lib/time";
 
 const POSITIONS: Position[] = POSITION_ORDER;
 
@@ -39,7 +41,7 @@ interface OverrideState {
 
 export default function TeamsPage() {
   const router = useRouter();
-  const { serverId, actorName, loaded } = useSession();
+  const { serverId, actorName, isAdmin, loaded } = useSession();
 
   const [players, setPlayers] = useState<Player[]>([]);
   const activePlayers = useMemo(() => players.filter((p) => p.is_active), [players]);
@@ -60,6 +62,7 @@ export default function TeamsPage() {
   const [savedTeams, setSavedTeams] = useState<SavedTeam[] | null>(null);
 
   const [error, setError] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const refreshPlayers = useCallback(() => {
@@ -112,7 +115,8 @@ export default function TeamsPage() {
     setOverrides((prev) => {
       const next = { ...prev };
       if (enabled) {
-        next[playerId] = { main: "TOP", sub: "", enforce_fixed_role: true };
+        const player = players.find((p) => p.id === playerId);
+        next[playerId] = { main: player?.main_role ?? "TOP", sub: "", enforce_fixed_role: true };
       } else {
         delete next[playerId];
       }
@@ -124,6 +128,7 @@ export default function TeamsPage() {
     if (!serverId || selected.size === 0) return;
     setBusy(true);
     setError(null);
+    setSavedNotice(false);
     setGenerateResponse(null);
     try {
       const overridePayload = Object.entries(overrides).map(([playerId, o]) => ({
@@ -158,11 +163,9 @@ export default function TeamsPage() {
         chosen_rank: comboIndex + 1,
         reason: reason || null,
       });
-      // Handoff to /matches - same role Streamlit's last_balance_result
-      // session_state key played between team_page.py and match_page.py.
-      window.localStorage.setItem("balancer.lastTeams", JSON.stringify(chosen.teams));
       setGenerateResponse(null);
       setReason("");
+      setSavedNotice(true);
       refreshRuns();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -179,6 +182,11 @@ export default function TeamsPage() {
     <div>
       <h1>팀 생성</h1>
       {error && <p className="error">{error}</p>}
+      {savedNotice && (
+        <p className="muted">
+          팀을 저장했습니다. 경기가 끝나면 결과를 입력해주세요. <Link href="/matches">경기 저장으로 가기 →</Link>
+        </p>
+      )}
 
       {savedRuns.length > 0 && (
         <div className="card">
@@ -187,7 +195,7 @@ export default function TeamsPage() {
             <select value={selectedRun} onChange={(e) => setSelectedRun(e.target.value)}>
               {savedRuns.map((ts) => (
                 <option key={ts} value={ts}>
-                  {new Date(ts).toLocaleString()}
+                  {formatUtc(ts, true)}
                 </option>
               ))}
             </select>
@@ -330,9 +338,14 @@ export default function TeamsPage() {
         </table>
         </div>
         <div className="row" style={{ marginTop: 12 }}>
-          <button onClick={handleGenerate} disabled={busy || selected.size === 0}>
+          <button onClick={handleGenerate} disabled={busy || selected.size === 0 || selected.size % 5 !== 0}>
             팀 생성
           </button>
+          {selected.size % 5 !== 0 && (
+            <span className="muted">
+              5명 단위로 골라야 합니다: {5 - (selected.size % 5)}명 더 고르거나 {selected.size % 5}명을 빼주세요.
+            </span>
+          )}
         </div>
       </div>
 
@@ -406,17 +419,23 @@ export default function TeamsPage() {
             </div>
           )}
 
-          <div className="row" style={{ marginTop: 12 }}>
-            <input
-              placeholder="선택 사유 (선택)"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              style={{ flex: 1 }}
-            />
-            <button onClick={handleSave} disabled={busy}>
-              팀 저장
-            </button>
-          </div>
+          {isAdmin ? (
+            <div className="row" style={{ marginTop: 12 }}>
+              <input
+                placeholder="선택 사유 (선택)"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button onClick={handleSave} disabled={busy}>
+                팀 저장
+              </button>
+            </div>
+          ) : (
+            <p className="muted" style={{ marginTop: 12 }}>
+              미리보기입니다. 팀 저장은 관리자만 할 수 있습니다.
+            </p>
+          )}
         </div>
       )}
     </div>

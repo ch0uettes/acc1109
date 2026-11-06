@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, DecisionLogEntry, Player } from "@/lib/api";
 import { useSession } from "@/lib/session";
+import { formatUtc } from "@/lib/time";
 
 export default function StatsPage() {
   const router = useRouter();
@@ -91,7 +92,7 @@ export default function StatsPage() {
             <tbody>
               {decisions.map((d) => (
                 <tr key={d.id ?? d.created_at}>
-                  <td>{new Date(d.created_at).toLocaleString()}</td>
+                  <td>{formatUtc(d.created_at)}</td>
                   <td>{d.strategy_name}</td>
                   <td>{d.player_ids.length}</td>
                   <td>{d.execution_time_seconds?.toFixed(3) ?? "-"}</td>

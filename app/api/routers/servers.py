@@ -15,6 +15,7 @@ from app.balance.config import HardConstraintConfig, NormalizationConfig
 from app.balance.constraint_engine import DEFAULT_CONSTRAINT_REGISTRY
 from app.models.role_change import RoleChange
 from app.models.server import Server
+from app.models.player import Player
 from app.models.server_membership import ServerMembership
 from app.services.rbac import Permission, require_permission
 from app.services.server_service import ServerService
@@ -146,9 +147,48 @@ def login(server_id: int, payload: LoginRequest, db: Session = Depends(get_db)) 
     return SessionResponse(token=issue_token(claims), member=member)
 
 
+class NameCheckRequest(BaseModel):
+    display_name: str
+    join_code: str = ""
+
+
+class NameCheckResponse(BaseModel):
+    exists: bool
+    suggestions: list[str]
+
+
+@router.post("/{server_id}/session/check", response_model=NameCheckResponse)
+def check_login_name(server_id: int, payload: NameCheckRequest, db: Session = Depends(get_db)) -> NameCheckResponse:
+    """Before login: is this name new, and does it look like a typo of a
+    known one? Needs the entry code, same as login."""
+    result = ServerService(db).check_name(server_id, payload.display_name, payload.join_code)
+    return NameCheckResponse(**result)
+
+
 @router.get("/{server_id}/me", response_model=ServerMembership)
 def me(actor: ServerMembership = Depends(get_actor)) -> ServerMembership:
     return actor
+
+
+@router.get("/{server_id}/me/player", response_model=Optional[Player])
+def my_player(db: Session = Depends(get_db), actor: ServerMembership = Depends(get_actor)) -> Optional[Player]:
+    """The player the logged-in member is (for voting as yourself)."""
+    return ServerService(db).linked_player(actor)
+
+
+class LinkPlayerRequest(BaseModel):
+    player_id: Optional[int] = None
+
+
+@router.put("/{server_id}/members/{member_id}/player", response_model=ServerMembership)
+def link_member_player(
+    server_id: int,
+    member_id: int,
+    payload: LinkPlayerRequest,
+    db: Session = Depends(get_db),
+    actor: ServerMembership = Depends(get_actor),
+) -> ServerMembership:
+    return ServerService(db).link_member_player(server_id, actor.role, member_id, payload.player_id)
 
 
 @router.put("/{server_id}/me/pin", response_model=SessionResponse)

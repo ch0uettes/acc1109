@@ -53,3 +53,38 @@ def init_db() -> None:
     from app.database import entities  # noqa: F401  (registers tables on Base.metadata)
 
     Base.metadata.create_all(engine)
+    add_missing_columns(engine)
+
+
+def add_missing_columns(bind) -> list[str]:
+    """create_all() creates missing tables but never alters existing ones,
+    so a nullable column added to a model would be missing from the live
+    database. Add those - additive only: no column is changed or dropped,
+    and existing rows just get NULL. Returns "table.column" for each one
+    added. Safe to run on every cold start, including several at once."""
+    from sqlalchemy import inspect, text
+
+    preparer = bind.dialect.identifier_preparer
+    existing_tables = set(inspect(bind).get_table_names())
+    added: list[str] = []
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        present = {c["name"] for c in inspect(bind).get_columns(table.name)}
+        for column in table.columns:
+            if column.name in present or not column.nullable:
+                continue
+            ddl = (
+                f"ALTER TABLE {preparer.quote(table.name)} "
+                f"ADD COLUMN {preparer.quote(column.name)} {column.type.compile(dialect=bind.dialect)}"
+            )
+            try:
+                with bind.begin() as conn:
+                    conn.execute(text(ddl))
+                added.append(f"{table.name}.{column.name}")
+            except Exception:
+                # Another instance starting at the same moment may have
+                # added it first; anything else is a real failure.
+                if column.name not in {c["name"] for c in inspect(bind).get_columns(table.name)}:
+                    raise
+    return added

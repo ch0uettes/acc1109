@@ -49,7 +49,7 @@ class RandomSwapOptimizer(TeamOptimizer):
     def optimize(self, players: list[Player], cost_fn: BalanceEvaluator) -> BalanceResult:
         if len(players) == 0 or len(players) % TEAM_SIZE != 0:
             raise InvalidPlayerCountError(
-                f"Player count must be a positive multiple of {TEAM_SIZE}, got {len(players)}"
+                f"참가자 수는 {TEAM_SIZE}명 단위여야 합니다 (현재 {len(players)}명)"
             )
 
         rng = random.Random(self.seed)
@@ -115,7 +115,7 @@ class TieredSnakeDraftOptimizer(TeamOptimizer):
     def optimize(self, players: list[Player], cost_fn: BalanceEvaluator) -> BalanceResult:
         if len(players) == 0 or len(players) % TEAM_SIZE != 0:
             raise InvalidPlayerCountError(
-                f"Player count must be a positive multiple of {TEAM_SIZE}, got {len(players)}"
+                f"참가자 수는 {TEAM_SIZE}명 단위여야 합니다 (현재 {len(players)}명)"
             )
 
         num_teams = len(players) // TEAM_SIZE

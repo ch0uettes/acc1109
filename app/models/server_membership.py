@@ -24,3 +24,6 @@ class ServerMembership(BaseModel):
     # Whether an admin PIN is set - the hash itself never leaves
     # ServerMembershipRepository.
     has_pin: bool = False
+    # Admin-set link to the player this member is. None = the active
+    # player whose nickname equals display_name (ServerService.linked_player).
+    player_id: Optional[int] = None

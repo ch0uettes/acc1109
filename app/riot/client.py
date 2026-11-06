@@ -59,6 +59,11 @@ class RiotAPIClient(ABC):
     def get_account_by_riot_id(self, game_name: str, tag_line: str) -> RiotAccount:
         ...
 
+    def get_account_by_puuid(self, puuid: str) -> RiotAccount:
+        """The current Riot ID for a puuid. Not abstract: callers treat it
+        as best-effort, so a client without it just raises."""
+        raise NotImplementedError("Riot API client cannot look up an account by puuid")
+
     @abstractmethod
     def get_rank(self, puuid: str) -> Optional[RankInfo]:
         """None if the account has no ranked solo queue entry this season."""
@@ -218,6 +223,11 @@ class LiveRiotAPIClient(RiotAPIClient):
             f"https://{self.region}.api.riotgames.com"
             f"/riot/account/v1/accounts/by-riot-id/{quote(game_name.strip(), safe='')}/{quote(tag_line.strip(), safe='')}"
         )
+        data = self._get(url)
+        return RiotAccount(puuid=data["puuid"], game_name=data["gameName"], tag_line=data["tagLine"])
+
+    def get_account_by_puuid(self, puuid: str) -> RiotAccount:
+        url = f"https://{self.region}.api.riotgames.com/riot/account/v1/accounts/by-puuid/{quote(puuid, safe='')}"
         data = self._get(url)
         return RiotAccount(puuid=data["puuid"], game_name=data["gameName"], tag_line=data["tagLine"])
 

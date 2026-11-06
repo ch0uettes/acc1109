@@ -23,6 +23,9 @@ export default function ServerPickerPage() {
   const [nameInput, setNameInput] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [pin, setPin] = useState("");
+  // Set when the typed name is new: confirm it (or pick a look-alike)
+  // before login silently creates a second account for a typo.
+  const [newNamePrompt, setNewNamePrompt] = useState<{ name: string; suggestions: string[] } | null>(null);
 
   useEffect(() => {
     api
@@ -58,9 +61,31 @@ export default function ServerPickerPage() {
     );
   }
 
-  function handleJoin() {
-    if (!chosenServerId || !nameInput) return;
+  async function handleJoin() {
+    if (!chosenServerId || !nameInput.trim()) return;
+    setBusy(true);
+    setError(null);
+    setNewNamePrompt(null);
+    try {
+      const { exists, suggestions } = await api.checkLoginName(Number(chosenServerId), nameInput, joinCode);
+      if (!exists) {
+        setNewNamePrompt({ name: nameInput.trim(), suggestions });
+        setBusy(false);
+        return;
+      }
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+      setBusy(false);
+      return;
+    }
     enter(() => api.login(Number(chosenServerId), nameInput, joinCode, pin));
+  }
+
+  function joinAs(name: string) {
+    if (!chosenServerId) return;
+    setNameInput(name);
+    setNewNamePrompt(null);
+    enter(() => api.login(Number(chosenServerId), name, joinCode, pin));
   }
 
   if (!loaded) return null;
@@ -98,7 +123,14 @@ export default function ServerPickerPage() {
               </option>
             ))}
           </select>
-          <input placeholder="내 이름" value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
+          <input
+            placeholder="내 이름"
+            value={nameInput}
+            onChange={(e) => {
+              setNameInput(e.target.value);
+              setNewNamePrompt(null);
+            }}
+          />
           <input
             type="text"
             placeholder="입장 코드"
@@ -117,6 +149,24 @@ export default function ServerPickerPage() {
             입장
           </button>
         </div>
+        {newNamePrompt && (
+          <div className="name-prompt">
+            <p style={{ margin: 0 }}>
+              <strong>&lsquo;{newNamePrompt.name}&rsquo;</strong>은(는) 처음 보는 이름입니다.
+              {newNamePrompt.suggestions.length > 0 && " 혹시 이 중 하나인가요?"}
+            </p>
+            <div className="row" style={{ marginTop: 8, flexWrap: "wrap" }}>
+              {newNamePrompt.suggestions.map((s) => (
+                <button key={s} onClick={() => joinAs(s)} disabled={busy}>
+                  {s}(으)로 입장
+                </button>
+              ))}
+              <button className="secondary" onClick={() => joinAs(newNamePrompt.name)} disabled={busy}>
+                새 참가자 &lsquo;{newNamePrompt.name}&rsquo;(으)로 입장
+              </button>
+            </div>
+          </div>
+        )}
         <p className="muted">
           일반 참가자는 입장 코드만 입력하면 되고, 한 번 입장한 브라우저에서는 1년간 다시 입력할 필요가 없습니다
           (Owner가 입장 코드를 바꾸면 다시 입력). Owner/관리자는 PIN도 필요하며, PIN이 아직 없다면 이번에 입력한

@@ -24,6 +24,8 @@ export interface Player {
   server_id: number | null;
   discord_id: string | null;
   puuid: string | null;
+  riot_game_name: string | null;
+  riot_tag_line: string | null;
   nickname: string;
   tier: Tier;
   division: Division;
@@ -128,6 +130,7 @@ export interface ServerMembership {
   role: Role;
   created_at: string;
   has_pin: boolean;
+  player_id: number | null;
 }
 
 export interface RiotApiKeyStatus {
@@ -243,6 +246,9 @@ export interface MatchPlayerResult {
   team_index: number;
   position: Position;
   contribution: ContributionScore;
+  internal_rating_before: number | null;
+  internal_rating_after: number | null;
+  exited_calibration: boolean | null;
 }
 
 export interface Match {
@@ -254,6 +260,9 @@ export interface Match {
   ai_mvp_player_id: number | null;
   user_mvp_player_id: number | null;
   note: string | null;
+  team_run_at: string | null;
+  // Recorded with each player's rating change kept, so deleting it can undo them.
+  revertible: boolean;
 }
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -264,6 +273,13 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+export interface VoteSummary {
+  participant_count: number;
+  counts: { player_id: number; votes: number }[];
+  voter_player_ids: number[];
+  leader_player_ids: number[];
 }
 
 // Every call carries the login token (see lib/session.ts) when there is
@@ -316,6 +332,11 @@ export const api = {
     request<SessionResponse>(`/servers/${serverId}/session`, {
       method: "POST",
       body: { display_name: displayName, join_code: joinCode, pin: pin || null },
+    }),
+  checkLoginName: (serverId: number, displayName: string, joinCode: string) =>
+    request<{ exists: boolean; suggestions: string[] }>(`/servers/${serverId}/session/check`, {
+      method: "POST",
+      body: { display_name: displayName, join_code: joinCode },
     }),
   me: (serverId: number) => request<ServerMembership>(`/servers/${serverId}/me`),
   changeOwnPin: (serverId: number, currentPin: string, newPin: string) =>
@@ -390,7 +411,9 @@ export const api = {
       body: player,
     }),
   refreshPlayerFromRiot: (serverId: number, playerId: number) =>
-    request<Player>(`/servers/${serverId}/players/${playerId}/refresh`, { method: "POST" }),
+    request<{ player: Player; message: string }>(`/servers/${serverId}/players/${playerId}/refresh`, {
+      method: "POST",
+    }),
   probeCurrentSeason: (serverId: number, gameName: string, tagLine: string) =>
     request<{ puuid: string; current: TierSnapshot | null }>(`/servers/${serverId}/players/probe`, {
       method: "POST",
@@ -428,6 +451,8 @@ export const api = {
       peak_achieved_season?: string | null;
       recommendation?: RoleRecommendation | null;
       reason?: string | null;
+      game_name?: string | null;
+      tag_line?: string | null;
     }
   ) => request<Player>(`/servers/${serverId}/players/register`, { method: "POST", body: payload }),
   extractRiotIds: (file: File) => {
@@ -477,7 +502,7 @@ export const api = {
   recordMatch: (
     serverId: number,
     payload: {
-      teams: Team[];
+      team_run_at: string;
       winning_team_index: number;
       note?: string | null;
       match_stats_by_player_id?: Record<
@@ -486,6 +511,9 @@ export const api = {
       >;
     }
   ) => request<Match>(`/servers/${serverId}/matches`, { method: "POST", body: payload }),
+  listMatches: (serverId: number, limit = 50) => request<Match[]>(`/servers/${serverId}/matches?limit=${limit}`),
+  deleteMatch: (serverId: number, matchId: number) =>
+    request<{ ratings_reverted: boolean }>(`/servers/${serverId}/matches/${matchId}`, { method: "DELETE" }),
 
   extractMatchResult: (serverId: number, file: File, knownNicknames: string[]) => {
     const form = new FormData();
@@ -507,13 +535,18 @@ export const api = {
   },
 
   listPendingVotes: (serverId: number) => request<Match[]>(`/servers/${serverId}/matches/pending-votes`),
-  castVote: (serverId: number, matchId: number, voterPlayerId: number, votedPlayerId: number) =>
+  // voterPlayerId only when an admin votes on someone else's behalf;
+  // otherwise the server votes as the logged-in member's player.
+  castVote: (serverId: number, matchId: number, votedPlayerId: number, voterPlayerId?: number) =>
     request(`/servers/${serverId}/matches/${matchId}/votes`, {
       method: "POST",
-      body: { voter_player_id: voterPlayerId, voted_player_id: votedPlayerId },
+      body: { voted_player_id: votedPlayerId, voter_player_id: voterPlayerId ?? null },
     }),
+  myPlayer: (serverId: number) => request<Player | null>(`/servers/${serverId}/me/player`),
   tallyVote: (serverId: number, matchId: number) =>
     request<number | null>(`/servers/${serverId}/matches/${matchId}/votes/tally`),
+  voteSummary: (serverId: number, matchId: number) =>
+    request<VoteSummary>(`/servers/${serverId}/matches/${matchId}/votes/summary`),
   setUserMvp: (serverId: number, matchId: number, playerId: number) =>
     request<void>(`/servers/${serverId}/matches/${matchId}/user-mvp`, {
       method: "POST",
@@ -534,6 +567,11 @@ export const api = {
     return found;
   },
   listMembers: (serverId: number) => request<ServerMembership[]>(`/servers/${serverId}/members`),
+  linkMemberPlayer: (serverId: number, memberId: number, playerId: number | null) =>
+    request<ServerMembership>(`/servers/${serverId}/members/${memberId}/player`, {
+      method: "PUT",
+      body: { player_id: playerId },
+    }),
   promoteMember: (serverId: number, targetDisplayName: string, reason?: string) =>
     request<ServerMembership>(`/servers/${serverId}/members/promote`, {
       method: "POST",

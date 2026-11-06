@@ -122,6 +122,19 @@ class PlayerService:
         current = TierSnapshot(rank.tier, rank.division, rank.lp) if rank else None
         return account.puuid, current
 
+    def _refresh_riot_id(self, player: Player) -> Player:
+        """Stores the player's current Riot ID (it can change; OCR matching
+        relies on it). Best-effort: a failed lookup keeps what's on file."""
+        try:
+            account = self.riot_client.get_account_by_puuid(player.puuid)
+        except Exception:
+            return player
+        if (account.game_name, account.tag_line) == (player.riot_game_name, player.riot_tag_line):
+            return player
+        return self.repo.update(
+            player.model_copy(update={"riot_game_name": account.game_name, "riot_tag_line": account.tag_line})
+        )
+
     def refresh_from_riot(self, player_id: int, actor_role: Role) -> tuple[Player, str]:
         """Re-fetches this already-registered player's CURRENT Riot rank
         and updates their stored tier/division/lp/official_rating to
@@ -157,7 +170,7 @@ class PlayerService:
         except requests.exceptions.RequestException as exc:
             raise AppError(f"Riot API 조회 실패: {exc}") from exc
         if rank is None:
-            return player, f"'{player.nickname}'은(는) 현재 시즌 언랭 상태입니다 - 필요하면 아래에서 Seed Rating을 직접 설정해주세요."
+            return self._refresh_riot_id(player), f"'{player.nickname}'은(는) 현재 시즌 언랭 상태입니다 - 필요하면 아래에서 Seed Rating을 직접 설정해주세요."
 
         current = TierSnapshot(rank.tier, rank.division, rank.lp)
         peak = (
@@ -179,7 +192,7 @@ class PlayerService:
                 "calibration_mode": resolution.calibration_mode,
             }
         )
-        saved = self.repo.update(updated)
+        saved = self._refresh_riot_id(self.repo.update(updated))
         self._record_season_snapshot(saved)
         tier_label = (
             f"{saved.tier.value} {saved.lp}LP"
@@ -290,6 +303,8 @@ class PlayerService:
         sub_role: Optional[Position] = None,
         recommendation: Optional[RoleRecommendation] = None,
         peak_achieved_season: Optional[str] = None,
+        riot_game_name: Optional[str] = None,
+        riot_tag_line: Optional[str] = None,
     ) -> Player:
         """Case 1 (current is not None): Official Rating from Riot data.
         Case 2/3 (current is None): the operator's `seed_tier` (+ optional
@@ -376,6 +391,10 @@ class PlayerService:
             )
             saved = self.repo.add(player)
 
+        if riot_game_name and riot_tag_line:
+            saved = self.repo.update(
+                saved.model_copy(update={"riot_game_name": riot_game_name.strip(), "riot_tag_line": riot_tag_line.strip()})
+            )
         self._record_season_snapshot(saved)
         if resolution.rating_source == RatingSource.SEED:
             self._log_seed_rating_change(saved.id, None, resolution.seed_rating, changed_by, reason)
