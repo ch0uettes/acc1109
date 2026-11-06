@@ -476,5 +476,5 @@ class ServerService:
     def _require_member(self, server_id: int, display_name: str) -> ServerMembership:
         member = self.get_member(server_id, display_name)
         if member is None:
-            raise MembershipNotFoundError(f"{display_name} is not a member of server {server_id}")
+            raise MembershipNotFoundError(f"'{display_name}'은(는) 이 서버의 멤버가 아닙니다")
         return member

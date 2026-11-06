@@ -21,11 +21,14 @@ from app.utils.exceptions import (
     PlayerNotFoundError,
 )
 
+from app.services.server_service import MembershipNotFoundError
+
 _STATUS_BY_ERROR: dict[type[AppError], int] = {
     AuthenticationError: 401,
     PermissionDeniedError: 403,
     PlayerNotFoundError: 404,
     MatchNotFoundError: 404,
+    MembershipNotFoundError: 404,
     DuplicateMembershipError: 409,
     DuplicateServerError: 409,
     DuplicateVoteError: 409,

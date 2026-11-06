@@ -34,6 +34,21 @@ export function saveSession(member: ServerMembership, token: string) {
   window.dispatchEvent(new Event(SESSION_EVENT));
 }
 
+// The role/name stored at login go stale when an admin demotes, promotes
+// or renames this member. Called with a fresh GET /me so the screens
+// follow; only fires the change event when something actually changed.
+export function syncSession(member: ServerMembership) {
+  try {
+    const ls = window.localStorage;
+    if (ls.getItem(ROLE_KEY) === member.role && ls.getItem(ACTOR_NAME_KEY) === member.display_name) return;
+    ls.setItem(ROLE_KEY, member.role);
+    ls.setItem(ACTOR_NAME_KEY, member.display_name);
+  } catch {
+    return;
+  }
+  window.dispatchEvent(new Event(SESSION_EVENT));
+}
+
 export function clearSession() {
   for (const key of [SERVER_ID_KEY, ACTOR_NAME_KEY, ROLE_KEY, TOKEN_KEY]) {
     window.localStorage.removeItem(key);

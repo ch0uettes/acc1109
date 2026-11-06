@@ -1,12 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useSession } from "@/lib/session";
+import { usePathname } from "next/navigation";
+import { useEffect } from "react";
+import { api } from "@/lib/api";
+import { syncSession, useSession } from "@/lib/session";
 
 // Client component so the 서버 관리 link can follow the logged-in role -
 // hiding it is only a UI nicety, the API enforces the permission itself.
 export default function Nav() {
-  const { actorName, isAdmin } = useSession();
+  const { serverId, actorName, isAdmin } = useSession();
+  const pathname = usePathname();
+
+  // Re-read role and name from the server on each page change (the nav
+  // never remounts), so a demotion or rename shows without re-entering.
+  // A revoked token gets the usual 401 handling in api.ts.
+  useEffect(() => {
+    if (!serverId) return;
+    api.me(serverId).then(syncSession).catch(() => undefined);
+  }, [serverId, pathname]);
 
   return (
     <nav className="nav">

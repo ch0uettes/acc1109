@@ -257,3 +257,31 @@ def test_vote_summary_shows_counts_voters_and_ties(client, server):
     # A player can read it too (counts are public, ballots aren't).
     token = _login(client, server["id"], "p4")
     assert client.get(f"{url}/summary", headers=_auth(token)).status_code == 200
+
+
+# --- one server's ids never reach into another server ---
+
+
+def test_other_servers_matches_players_and_members_are_not_found(client, server):
+    match_id = _record(client, server).json()["id"]
+    res = client.post(
+        "/servers", json={"name": "다른 서버", "owner_display_name": "Boss", "join_code": "other123", "owner_pin": "5678"}
+    )
+    other_id, other = res.json()["member"]["server_id"], res.json()["token"]
+    other_player = client.post(
+        f"/servers/{other_id}/players",
+        headers=_auth(other),
+        json={"nickname": "x", "tier": "GOLD", "division": "I", "lp": 0, "main_role": "MID"},
+    ).json()["id"]
+    other_member = client.get(f"/servers/{other_id}/members", headers=_auth(other)).json()[0]["id"]
+
+    assert client.get(f"/servers/{other_id}/matches/{match_id}/votes/summary", headers=_auth(other)).status_code == 404
+    assert client.delete(f"/servers/{other_id}/matches/{match_id}", headers=_auth(other)).status_code == 404
+    own_member = client.get(f"/servers/{server['id']}/members", headers=_auth(server["owner"])).json()[0]["id"]
+    link = lambda member_id, player_id: client.put(  # noqa: E731
+        f"/servers/{server['id']}/members/{member_id}/player",
+        headers=_auth(server["owner"]),
+        json={"player_id": player_id},
+    )
+    assert link(own_member, other_player).status_code == 404
+    assert link(other_member, None).status_code == 404

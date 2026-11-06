@@ -343,7 +343,8 @@ export default function TeamsPage() {
           </button>
           {selected.size % 5 !== 0 && (
             <span className="muted">
-              5명 단위로 골라야 합니다: {5 - (selected.size % 5)}명 더 고르거나 {selected.size % 5}명을 빼주세요.
+              5명 단위로 골라야 합니다: {5 - (selected.size % 5)}명 더 고르
+              {selected.size > 5 ? `거나 ${selected.size % 5}명을 빼` : ""}주세요.
             </span>
           )}
         </div>
