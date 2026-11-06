@@ -14,6 +14,7 @@ import {
 } from "@/lib/api";
 import { captainId, POSITION_ORDER, usePlayerTable } from "@/lib/playerTable";
 import { useSession } from "@/lib/session";
+import { formatUtc } from "@/lib/time";
 
 const POSITIONS: Position[] = POSITION_ORDER;
 
@@ -158,9 +159,6 @@ export default function TeamsPage() {
         chosen_rank: comboIndex + 1,
         reason: reason || null,
       });
-      // Handoff to /matches - same role Streamlit's last_balance_result
-      // session_state key played between team_page.py and match_page.py.
-      window.localStorage.setItem("balancer.lastTeams", JSON.stringify(chosen.teams));
       setGenerateResponse(null);
       setReason("");
       refreshRuns();
@@ -187,7 +185,7 @@ export default function TeamsPage() {
             <select value={selectedRun} onChange={(e) => setSelectedRun(e.target.value)}>
               {savedRuns.map((ts) => (
                 <option key={ts} value={ts}>
-                  {new Date(ts).toLocaleString()}
+                  {formatUtc(ts, true)}
                 </option>
               ))}
             </select>

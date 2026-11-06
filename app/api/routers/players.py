@@ -50,6 +50,9 @@ class ProbeResponse(BaseModel):
 class RegisterPlayerRequest(BaseModel):
     nickname: str
     puuid: str
+    # The Riot ID looked up, stored for OCR name matching.
+    game_name: Optional[str] = None
+    tag_line: Optional[str] = None
     main_role: Position
     sub_role: Optional[Position] = None
     current: Optional[TierSnapshot] = None
@@ -146,6 +149,8 @@ def register_player(
         sub_role=payload.sub_role,
         recommendation=payload.recommendation,
         peak_achieved_season=payload.peak_achieved_season,
+        riot_game_name=payload.game_name,
+        riot_tag_line=payload.tag_line,
     )
 
 

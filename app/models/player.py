@@ -58,6 +58,10 @@ class Player(BaseModel):
     server_id: Optional[int] = None
     discord_id: Optional[str] = None
     puuid: Optional[str] = None
+    # In-game Riot ID; lets result-screen OCR names match a player whose
+    # in-app nickname differs.
+    riot_game_name: Optional[str] = None
+    riot_tag_line: Optional[str] = None
     nickname: str
     tier: Tier
     division: Division = Division.IV

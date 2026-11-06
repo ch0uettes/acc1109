@@ -36,6 +36,7 @@ class Permission(str, Enum):
     # Player-level
     LINK_RIOT_ACCOUNT = "link_riot_account"
     VOTE_USER_MVP = "vote_user_mvp"
+    VOTE_ON_BEHALF = "vote_on_behalf"
 
 
 _PLATFORM_ADMIN_PERMISSIONS = frozenset(
@@ -61,6 +62,7 @@ _SERVER_ADMIN_PERMISSIONS = _PLAYER_PERMISSIONS | frozenset(
         Permission.SET_SEED_RATING,
         Permission.CONFIRM_AI_MVP,
         Permission.PROMOTE_TO_SERVER_ADMIN,
+        Permission.VOTE_ON_BEHALF,
     }
 )
 

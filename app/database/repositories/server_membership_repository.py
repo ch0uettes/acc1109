@@ -17,6 +17,7 @@ def _to_domain(entity: ServerMembershipEntity) -> ServerMembership:
         role=Role(entity.role),
         created_at=entity.created_at,
         has_pin=entity.pin_hash is not None,
+        player_id=entity.player_id,
     )
 
 
@@ -78,6 +79,13 @@ class ServerMembershipRepository(BaseRepository[ServerMembershipEntity]):
         if entity is None:
             raise ValueError(f"ServerMembership {membership_id} not found")
         entity.display_name = display_name
+        self.session.commit()
+        self.session.refresh(entity)
+        return _to_domain(entity)
+
+    def set_player(self, membership_id: int, player_id: int | None) -> ServerMembership:
+        entity = self._get_entity(membership_id)
+        entity.player_id = player_id
         self.session.commit()
         self.session.refresh(entity)
         return _to_domain(entity)

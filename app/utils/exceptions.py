@@ -34,6 +34,10 @@ class InvalidVoteError(AppError):
     of the match being voted on."""
 
 
+class DuplicateMatchError(AppError):
+    """Raised when a saved team run already has a match recorded from it."""
+
+
 class DuplicateVoteError(AppError):
     """Raised when a voter has already cast a vote for this match."""
 

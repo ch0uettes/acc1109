@@ -15,6 +15,7 @@ from app.balance.config import HardConstraintConfig, NormalizationConfig
 from app.balance.constraint_engine import DEFAULT_CONSTRAINT_REGISTRY
 from app.models.role_change import RoleChange
 from app.models.server import Server
+from app.models.player import Player
 from app.models.server_membership import ServerMembership
 from app.services.rbac import Permission, require_permission
 from app.services.server_service import ServerService
@@ -149,6 +150,27 @@ def login(server_id: int, payload: LoginRequest, db: Session = Depends(get_db)) 
 @router.get("/{server_id}/me", response_model=ServerMembership)
 def me(actor: ServerMembership = Depends(get_actor)) -> ServerMembership:
     return actor
+
+
+@router.get("/{server_id}/me/player", response_model=Optional[Player])
+def my_player(db: Session = Depends(get_db), actor: ServerMembership = Depends(get_actor)) -> Optional[Player]:
+    """The player the logged-in member is (for voting as yourself)."""
+    return ServerService(db).linked_player(actor)
+
+
+class LinkPlayerRequest(BaseModel):
+    player_id: Optional[int] = None
+
+
+@router.put("/{server_id}/members/{member_id}/player", response_model=ServerMembership)
+def link_member_player(
+    server_id: int,
+    member_id: int,
+    payload: LinkPlayerRequest,
+    db: Session = Depends(get_db),
+    actor: ServerMembership = Depends(get_actor),
+) -> ServerMembership:
+    return ServerService(db).link_member_player(server_id, actor.role, member_id, payload.player_id)
 
 
 @router.put("/{server_id}/me/pin", response_model=SessionResponse)

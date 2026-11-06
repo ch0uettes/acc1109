@@ -177,6 +177,8 @@ export default function PlayersPage() {
         current: probeCurrent,
         seed_tier: probeCurrent ? null : seedTier,
         recommendation,
+        game_name: gameName,
+        tag_line: tagLine,
       });
       setProbePuuid(null);
       setProbeCurrent(null);
@@ -229,6 +231,8 @@ export default function PlayersPage() {
             current,
             seed_tier: current ? null : "GOLD",
             recommendation: rec,
+            game_name: row.game_name,
+            tag_line: row.tag_line,
           });
           added.push(row.nickname);
         } catch (e) {

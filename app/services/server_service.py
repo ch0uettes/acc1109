@@ -15,9 +15,11 @@ from app.auth import (
 )
 from app.balance.config import HardConstraintConfig, NormalizationConfig
 from app.database.repositories.app_setting_repository import RIOT_API_KEY, AppSettingRepository
+from app.database.repositories.player_repository import PlayerRepository
 from app.database.repositories.role_change_repository import RoleChangeRepository
 from app.database.repositories.server_membership_repository import ServerMembershipRepository
 from app.database.repositories.server_repository import ServerRepository
+from app.models.player import Player
 from app.models.role_change import RoleChange
 from app.models.server import Server
 from app.models.server_membership import ServerMembership
@@ -30,6 +32,7 @@ from app.utils.exceptions import (
     DuplicateMembershipError,
     DuplicateServerError,
     PermissionDeniedError,
+    PlayerNotFoundError,
 )
 
 
@@ -63,6 +66,7 @@ class ServerService:
     through here and is always audited via RoleChangeRepository."""
 
     def __init__(self, session: Session) -> None:
+        self.session = session
         self.server_repo = ServerRepository(session)
         self.membership_repo = ServerMembershipRepository(session)
         self.role_change_repo = RoleChangeRepository(session)
@@ -119,6 +123,31 @@ class ServerService:
 
     def get_member(self, server_id: int, display_name: str) -> ServerMembership | None:
         return self.membership_repo.get_by_display_name(server_id, display_name)
+
+    def linked_player(self, member: ServerMembership) -> Player | None:
+        """The player this member is: the admin-set link, else the active
+        player whose nickname equals the member's name."""
+        players = PlayerRepository(self.session, member.server_id)
+        if member.player_id is not None:
+            try:
+                return players.get(member.player_id)
+            except PlayerNotFoundError:
+                return None
+        by_name = players.get_by_nickname(member.display_name.strip())
+        if by_name is None or by_name.is_active is False:
+            return None
+        return by_name
+
+    def link_member_player(
+        self, server_id: int, actor_role: Role, member_id: int, player_id: int | None
+    ) -> ServerMembership:
+        require_permission(actor_role, Permission.MANAGE_PLAYERS)
+        member = self.membership_repo.get(member_id)
+        if member is None or member.server_id != server_id:
+            raise MembershipNotFoundError("존재하지 않는 멤버입니다")
+        if player_id is not None:
+            PlayerRepository(self.session, server_id).get(player_id)  # raises PlayerNotFoundError
+        return self.membership_repo.set_player(member_id, player_id)
 
     def add_player_member(self, server_id: int, display_name: str, discord_id: str | None = None) -> ServerMembership:
         """Self-registration as a base Player - every identity gets this

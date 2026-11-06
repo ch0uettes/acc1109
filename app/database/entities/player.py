@@ -21,6 +21,10 @@ class PlayerEntity(Base):
     server_id: Mapped[int] = mapped_column(ForeignKey("servers.id"))
     discord_id: Mapped[Optional[str]] = mapped_column(nullable=True)
     puuid: Mapped[Optional[str]] = mapped_column(nullable=True)
+    # In-game Riot ID, for matching result-screen OCR names to players
+    # whose in-app nickname differs (often a real name).
+    riot_game_name: Mapped[Optional[str]] = mapped_column(nullable=True)
+    riot_tag_line: Mapped[Optional[str]] = mapped_column(nullable=True)
     nickname: Mapped[str]
     tier: Mapped[str]
     division: Mapped[str] = mapped_column(default="IV")
