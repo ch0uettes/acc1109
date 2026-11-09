@@ -31,6 +31,7 @@ from app.roster_export import saved_teams_to_txt, saved_teams_to_xlsx_bytes
 from app.services.player_service import PlayerService
 from app.services.server_service import ServerService
 from app.services.team_service import TeamService
+from app.utils.exceptions import InvalidPlayerCountError
 
 router = APIRouter(prefix="/servers/{server_id}/teams", tags=["teams"], dependencies=[Depends(get_actor)])
 
@@ -41,6 +42,19 @@ class SignupOverride(BaseModel):
     player_id: int
     match_override: Optional[RolePreference] = None
     enforce_fixed_role: bool = True
+
+
+# An inhouse is at least two teams of 5; beyond that, any multiple of 5.
+# Checked here rather than in the balancer, which can split a single team.
+MIN_PLAYERS = 10
+TEAM_SIZE = 5
+
+
+def check_player_count(count: int) -> None:
+    if count < MIN_PLAYERS:
+        raise InvalidPlayerCountError(f"팀 구성은 최소 {MIN_PLAYERS}명부터 가능합니다 (현재 {count}명)")
+    if count % TEAM_SIZE != 0:
+        raise InvalidPlayerCountError(f"참가자 수는 {TEAM_SIZE}명 단위여야 합니다 (현재 {count}명)")
 
 
 class GenerateTeamsRequest(BaseModel):
@@ -188,6 +202,7 @@ def _build_decision_log_draft(context: ExecutionContext) -> DecisionLogDraft:
 def generate_top_teams(
     server_id: int, payload: GenerateTeamsRequest, db: Session = Depends(get_db)
 ) -> GenerateTeamsResponse:
+    check_player_count(len(set(payload.player_ids)))
     signups = _build_signups(server_id, db, payload)
     service = _team_service_for_strategy(server_id, db, payload.strategy)
     context = service.run(signups, k=payload.k)

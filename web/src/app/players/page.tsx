@@ -514,6 +514,7 @@ export default function PlayersPage() {
               type="file"
               accept="image/png,image/jpeg,.csv,.txt,.xlsx,.xls"
               onChange={(e) => e.target.files?.[0] && handleBulkFile(e.target.files[0])}
+              disabled={busy}
             />
             {bulkRows.length > 0 && (
               <>

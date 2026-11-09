@@ -257,3 +257,62 @@ def test_vote_summary_shows_counts_voters_and_ties(client, server):
     # A player can read it too (counts are public, ballots aren't).
     token = _login(client, server["id"], "p4")
     assert client.get(f"{url}/summary", headers=_auth(token)).status_code == 200
+
+
+# --- one server's ids never reach into another server ---
+
+
+def test_other_servers_matches_players_and_members_are_not_found(client, server):
+    match_id = _record(client, server).json()["id"]
+    res = client.post(
+        "/servers", json={"name": "다른 서버", "owner_display_name": "Boss", "join_code": "other123", "owner_pin": "5678"}
+    )
+    other_id, other = res.json()["member"]["server_id"], res.json()["token"]
+    other_player = client.post(
+        f"/servers/{other_id}/players",
+        headers=_auth(other),
+        json={"nickname": "x", "tier": "GOLD", "division": "I", "lp": 0, "main_role": "MID"},
+    ).json()["id"]
+    other_member = client.get(f"/servers/{other_id}/members", headers=_auth(other)).json()[0]["id"]
+
+    assert client.get(f"/servers/{other_id}/matches/{match_id}/votes/summary", headers=_auth(other)).status_code == 404
+    assert client.delete(f"/servers/{other_id}/matches/{match_id}", headers=_auth(other)).status_code == 404
+    own_member = client.get(f"/servers/{server['id']}/members", headers=_auth(server["owner"])).json()[0]["id"]
+    link = lambda member_id, player_id: client.put(  # noqa: E731
+        f"/servers/{server['id']}/members/{member_id}/player",
+        headers=_auth(server["owner"]),
+        json={"player_id": player_id},
+    )
+    assert link(own_member, other_player).status_code == 404
+    assert link(other_member, None).status_code == 404
+
+
+# --- team generation: at least 10 players, then multiples of 5 ---
+
+
+def test_generate_needs_ten_then_multiples_of_five(client, server):
+    ids = list(server["ids"].values())
+    gen = lambda player_ids: client.post(  # noqa: E731
+        f"/servers/{server['id']}/teams/generate",
+        headers=_auth(server["owner"]),
+        json={"player_ids": player_ids, "k": 1},
+    )
+    five = gen(ids[:5])
+    assert five.status_code == 400 and "최소 10명" in five.json()["detail"]
+    assert "최소 10명" in gen(ids[:7]).json()["detail"]
+    ok = gen(ids)
+    assert ok.status_code == 200, ok.text
+    assert len(ok.json()["results"][0]["teams"]) == 2
+    # Duplicated ids don't count twice.
+    assert gen(ids[:5] * 2).status_code == 400
+
+
+def test_player_count_rule_beyond_ten():
+    from app.api.routers.teams import check_player_count
+    from app.utils.exceptions import InvalidPlayerCountError
+
+    for ok in (10, 15, 20):
+        check_player_count(ok)
+    for bad, words in ((12, "5명 단위"), (9, "최소 10명"), (0, "최소 10명")):
+        with pytest.raises(InvalidPlayerCountError, match=words):
+            check_player_count(bad)
