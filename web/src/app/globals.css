@@ -242,3 +242,85 @@ td {
 .vote-counts .vote-num {
   font-variant-numeric: tabular-nums;
 }
+
+/* Stats: leaderboard selection, record tiles, rating chart. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-height: 0;
+}
+.row-selected td {
+  background: rgba(91, 140, 255, 0.12);
+}
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.stat-tiles > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.stat-tiles strong {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 640px) {
+  .stat-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.rating-chart {
+  position: relative;
+}
+.rating-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: pan-y;
+}
+.rc-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.rc-axis {
+  fill: var(--muted);
+  font-size: 12px;
+}
+.rc-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.rc-dot {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 2;
+}
+.rc-crosshair {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+.rc-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  white-space: nowrap;
+  z-index: 1;
+}

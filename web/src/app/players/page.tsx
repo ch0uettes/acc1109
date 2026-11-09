@@ -45,6 +45,14 @@ async function inferPositionOrNull(serverId: number, puuid: string): Promise<Rol
   }
 }
 
+// "이름#태그" (as Riot shows it, also the full-width ＃) -> [name, tag].
+// null when there is no tag separator, so plain typing is left alone.
+function splitRiotId(value: string): [string, string] | null {
+  const at = Math.max(value.lastIndexOf("#"), value.lastIndexOf("＃"));
+  if (at < 0) return null;
+  return [value.slice(0, at).trim(), value.slice(at + 1).trim()];
+}
+
 export default function PlayersPage() {
   const router = useRouter();
   const { serverId, actorName, isAdmin, loaded } = useSession();
@@ -452,8 +460,24 @@ export default function PlayersPage() {
                 value={riotNickname}
                 onChange={(e) => setRiotNickname(e.target.value)}
               />
-              <input placeholder="게임 이름" value={gameName} onChange={(e) => setGameName(e.target.value)} />
-              <input placeholder="태그 (# 제외)" value={tagLine} onChange={(e) => setTagLine(e.target.value)} />
+              <input
+                placeholder="게임 이름 (이름#태그 붙여넣기 가능)"
+                value={gameName}
+                onChange={(e) => {
+                  const split = splitRiotId(e.target.value);
+                  if (split) {
+                    setGameName(split[0]);
+                    setTagLine(split[1]);
+                  } else {
+                    setGameName(e.target.value);
+                  }
+                }}
+              />
+              <input
+                placeholder="태그 (# 제외)"
+                value={tagLine}
+                onChange={(e) => setTagLine(e.target.value.replace(/^[#＃]/, ""))}
+              />
               <button onClick={handleProbe} disabled={busy || !riotNickname || !gameName || !tagLine}>
                 조회
               </button>
@@ -540,7 +564,10 @@ export default function PlayersPage() {
                               style={row[field].trim() ? undefined : { borderColor: "#e5484d" }}
                               onChange={(e) => {
                                 const next = [...bulkRows];
-                                next[i] = { ...row, [field]: e.target.value, error: undefined };
+                                const split = field === "game_name" ? splitRiotId(e.target.value) : null;
+                                next[i] = split
+                                  ? { ...row, game_name: split[0], tag_line: split[1], error: undefined }
+                                  : { ...row, [field]: e.target.value, error: undefined };
                                 setBulkRows(next);
                               }}
                               disabled={busy}

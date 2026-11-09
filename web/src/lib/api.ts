@@ -275,6 +275,34 @@ export class ApiError extends Error {
   }
 }
 
+export interface PlayerRecord {
+  player_id: number;
+  nickname: string;
+  is_active: boolean;
+  final_rating: number;
+  games: number;
+  wins: number;
+  losses: number;
+  ai_mvp: number;
+  user_mvp: number;
+}
+
+export interface PlayerRecordDetail {
+  record: PlayerRecord;
+  positions: { position: Position; games: number; wins: number }[];
+  rating_history: { match_id: number; played_at: string; won: boolean; rating_after: number; delta: number }[];
+  recent: {
+    match_id: number;
+    played_at: string;
+    won: boolean;
+    position: Position;
+    delta: number | null;
+    ai_mvp: boolean;
+    user_mvp: boolean;
+    teammates: string[];
+  }[];
+}
+
 export interface VoteSummary {
   participant_count: number;
   counts: { player_id: number; votes: number }[];
@@ -554,6 +582,9 @@ export const api = {
     }),
 
   leaderboard: (serverId: number) => request<Player[]>(`/servers/${serverId}/stats/leaderboard`),
+  playerRecords: (serverId: number) => request<PlayerRecord[]>(`/servers/${serverId}/stats/records`),
+  playerRecord: (serverId: number, playerId: number) =>
+    request<PlayerRecordDetail>(`/servers/${serverId}/stats/players/${playerId}/record`),
   aiMvpAccuracy: (serverId: number) => request<number>(`/servers/${serverId}/stats/ai-mvp-accuracy`),
   recentDecisions: (serverId: number, limit = 20) =>
     request<DecisionLogEntry[]>(`/servers/${serverId}/stats/decisions?limit=${limit}`),

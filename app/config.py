@@ -65,7 +65,7 @@ def _build_settings() -> Settings:
         # nothing to auto-detect here - bump this manually when a new split
         # starts. It only labels PlayerSeasonRank snapshots, nothing scores
         # off of it.
-        current_season_label=os.environ.get("CURRENT_SEASON_LABEL", "2025-S2"),
+        current_season_label=os.environ.get("CURRENT_SEASON_LABEL", "2026-S2"),
         # Optional - see app.ocr.extractor.build_ocr_extractor. Unset means
         # OCR falls back to Tesseract (or NotImplemented if that's missing
         # too, e.g. on Vercel where the system binary can't be installed).

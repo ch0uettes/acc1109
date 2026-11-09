@@ -16,6 +16,7 @@ import {
 import { captainId, POSITION_ORDER, usePlayerTable } from "@/lib/playerTable";
 import { useSession } from "@/lib/session";
 import { formatUtc } from "@/lib/time";
+import { copyText, generatedTeamsText, savedTeamsText } from "@/lib/teamText";
 
 const POSITIONS: Position[] = POSITION_ORDER;
 
@@ -63,6 +64,8 @@ export default function TeamsPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [selectionRestored, setSelectionRestored] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const refreshPlayers = useCallback(() => {
@@ -102,6 +105,50 @@ export default function TeamsPage() {
       .catch(() => setSavedTeams(null));
   }, [serverId, selectedRun]);
 
+  // Keep the checked players across reloads (per server, this browser).
+  const selectionKey = serverId ? `balancer.teamSelection.${serverId}` : null;
+  useEffect(() => {
+    if (!selectionKey || selectionRestored || players.length === 0) return;
+    try {
+      const saved: number[] = JSON.parse(window.localStorage.getItem(selectionKey) ?? "[]");
+      const active = new Set(activePlayers.map((p) => p.id));
+      setSelected(new Set(saved.filter((id) => active.has(id))));
+    } catch {
+      // unreadable or blocked storage: start empty
+    }
+    setSelectionRestored(true);
+  }, [selectionKey, selectionRestored, players, activePlayers]);
+  useEffect(() => {
+    if (!selectionKey || !selectionRestored) return;
+    try {
+      window.localStorage.setItem(selectionKey, JSON.stringify([...selected]));
+    } catch {
+      // storage unavailable: selection just won't survive a reload
+    }
+  }, [selectionKey, selectionRestored, selected]);
+
+  async function loadLastRunPlayers() {
+    if (!serverId || savedRuns.length === 0) return;
+    setError(null);
+    try {
+      const teams = await api.loadSavedRun(serverId, savedRuns[0]);
+      const active = new Set(activePlayers.map((p) => p.id));
+      const ids = teams.flatMap((t) => t.entries.map((e) => e.player?.id)).filter((id): id is number => id != null);
+      const kept = ids.filter((id) => active.has(id));
+      setSelected(new Set(kept));
+      setNote(
+        `마지막으로 저장한 팀(${formatUtc(savedRuns[0])})의 ${kept.length}명을 골랐습니다.` +
+          (kept.length < ids.length ? ` 비활성 참가자 ${ids.length - kept.length}명은 뺐습니다.` : "")
+      );
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function copyTeams(text: string) {
+    setNote((await copyText(text)) ? "팀 구성을 복사했습니다. 디스코드에 붙여넣으세요." : "복사하지 못했습니다. 브라우저 권한을 확인해주세요.");
+  }
+
   function toggleSelected(playerId: number) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -128,6 +175,7 @@ export default function TeamsPage() {
     if (!serverId || selected.size === 0) return;
     setBusy(true);
     setError(null);
+    setNote(null);
     setSavedNotice(false);
     setGenerateResponse(null);
     try {
@@ -137,7 +185,7 @@ export default function TeamsPage() {
         enforce_fixed_role: o.enforce_fixed_role,
       }));
       const res = await api.generateTeams(serverId, {
-        player_ids: Array.from(selected),
+        player_ids: activePlayers.filter((p) => selected.has(p.id)).map((p) => p.id),
         overrides: overridePayload,
         k: 3,
         strategy,
@@ -175,7 +223,7 @@ export default function TeamsPage() {
   }
 
   // At least two teams (10), then any multiple of 5 - same rule as the API.
-  const count = selected.size;
+  const count = activePlayers.filter((p) => selected.has(p.id)).length;
   const countOk = count >= 10 && count % 5 === 0;
   const countHint =
     count < 10
@@ -190,6 +238,7 @@ export default function TeamsPage() {
     <div>
       <h1>팀 생성</h1>
       {error && <p className="error">{error}</p>}
+      {note && <p className="muted">{note}</p>}
       {savedNotice && (
         <p className="muted">
           팀을 저장했습니다. 경기가 끝나면 결과를 입력해주세요. <Link href="/matches">경기 저장으로 가기 →</Link>
@@ -227,6 +276,11 @@ export default function TeamsPage() {
                 >
                   엑셀 다운로드
                 </button>
+                {savedTeams && (
+                  <button type="button" className="secondary" onClick={() => copyTeams(savedTeamsText(savedTeams))}>
+                    복사
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -261,8 +315,16 @@ export default function TeamsPage() {
 
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3 style={{ margin: 0 }}>참가자 선택 (10명 이상 5명 단위, {selected.size}명 선택됨)</h3>
+          <h3 style={{ margin: 0 }}>참가자 선택 (10명 이상 5명 단위, {count}명 선택됨)</h3>
           {playerTable.searchInput}
+        </div>
+        <div className="row" style={{ marginTop: 8 }}>
+          <button type="button" className="secondary" onClick={loadLastRunPlayers} disabled={busy || savedRuns.length === 0}>
+            지난 팀 참가자 불러오기
+          </button>
+          <button type="button" className="secondary" onClick={() => setSelected(new Set())} disabled={busy || selected.size === 0}>
+            선택 해제
+          </button>
         </div>
         <div className="table-scroll">
         <table>
@@ -366,6 +428,13 @@ export default function TeamsPage() {
                 조합 {i + 1}위 (cost {generateResponse.results[i].cost.toFixed(1)})
               </button>
             ))}
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => copyTeams(generatedTeamsText(generateResponse.results[comboIndex].teams))}
+            >
+              이 조합 복사
+            </button>
           </div>
 
           <div className="row" style={{ alignItems: "flex-start", marginTop: 12 }}>
