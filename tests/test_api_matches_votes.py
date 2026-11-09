@@ -285,3 +285,34 @@ def test_other_servers_matches_players_and_members_are_not_found(client, server)
     )
     assert link(own_member, other_player).status_code == 404
     assert link(other_member, None).status_code == 404
+
+
+# --- team generation: at least 10 players, then multiples of 5 ---
+
+
+def test_generate_needs_ten_then_multiples_of_five(client, server):
+    ids = list(server["ids"].values())
+    gen = lambda player_ids: client.post(  # noqa: E731
+        f"/servers/{server['id']}/teams/generate",
+        headers=_auth(server["owner"]),
+        json={"player_ids": player_ids, "k": 1},
+    )
+    five = gen(ids[:5])
+    assert five.status_code == 400 and "최소 10명" in five.json()["detail"]
+    assert "최소 10명" in gen(ids[:7]).json()["detail"]
+    ok = gen(ids)
+    assert ok.status_code == 200, ok.text
+    assert len(ok.json()["results"][0]["teams"]) == 2
+    # Duplicated ids don't count twice.
+    assert gen(ids[:5] * 2).status_code == 400
+
+
+def test_player_count_rule_beyond_ten():
+    from app.api.routers.teams import check_player_count
+    from app.utils.exceptions import InvalidPlayerCountError
+
+    for ok in (10, 15, 20):
+        check_player_count(ok)
+    for bad, words in ((12, "5명 단위"), (9, "최소 10명"), (0, "최소 10명")):
+        with pytest.raises(InvalidPlayerCountError, match=words):
+            check_player_count(bad)

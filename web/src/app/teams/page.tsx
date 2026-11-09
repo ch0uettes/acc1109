@@ -174,6 +174,14 @@ export default function TeamsPage() {
     }
   }
 
+  // At least two teams (10), then any multiple of 5 - same rule as the API.
+  const count = selected.size;
+  const countOk = count >= 10 && count % 5 === 0;
+  const countHint =
+    count < 10
+      ? `최소 10명부터 팀을 만들 수 있습니다: ${10 - count}명 더 골라주세요.`
+      : `5명 단위로 골라야 합니다: ${5 - (count % 5)}명 더 고르거나 ${count % 5}명을 빼주세요.`;
+
   if (!loaded || !serverId || !actorName) return null;
 
   const selectedPlayers = activePlayers.filter((p) => selected.has(p.id));
@@ -253,7 +261,7 @@ export default function TeamsPage() {
 
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3 style={{ margin: 0 }}>참가자 선택 (5명 단위, {selected.size}명 선택됨)</h3>
+          <h3 style={{ margin: 0 }}>참가자 선택 (10명 이상 5명 단위, {selected.size}명 선택됨)</h3>
           {playerTable.searchInput}
         </div>
         <div className="table-scroll">
@@ -338,17 +346,10 @@ export default function TeamsPage() {
         </table>
         </div>
         <div className="row" style={{ marginTop: 12 }}>
-          <button onClick={handleGenerate} disabled={busy || selected.size === 0 || selected.size % 5 !== 0}>
+          <button onClick={handleGenerate} disabled={busy || !countOk}>
             팀 생성
           </button>
-          {selected.size % 5 !== 0 && (
-            <span className="muted">
-              5명 단위로 골라야 합니다:{" "}
-              {selected.size > 5
-                ? `${5 - (selected.size % 5)}명 더 고르거나 ${selected.size % 5}명을 빼주세요.`
-                : `${5 - selected.size}명 더 골라주세요.`}
-            </span>
-          )}
+          {!countOk && <span className="muted">{countHint}</span>}
         </div>
       </div>
 
