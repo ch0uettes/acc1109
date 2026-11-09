@@ -699,7 +699,7 @@ export default function PlayersPage() {
               {playerTable.sortTh("nickname", "닉네임")}
               {playerTable.sortTh("tier", "티어")}
               {playerTable.sortTh("position", "포지션")}
-              {playerTable.sortTh("rating", "Final Rating")}
+              {playerTable.sortTh("rating", "기본 레이팅")}
               {playerTable.sortTh("source", "출처")}
               {playerTable.sortTh("status", "상태")}
               {isAdmin && <th></th>}

@@ -53,11 +53,10 @@ class _FixedWeightStrategy(IBalanceStrategy):
 def test_mean_balance_feature():
     team_a = Team(index=0, players=[_player(100), _player(100)])
     team_b = Team(index=1, players=[_player(200), _player(200)])
-    # final_rating blends official_rating with internal_rating (0 here) at
-    # the brand-new-player weight (0.9 base / 0.1 internal by default), so
-    # team averages are 90 and 180 - stddev of two points is half their
-    # gap (population stdev, not sample).
-    assert MeanBalanceFeature().evaluate_raw([team_a, team_b]) == 45.0
+    # final_rating is official_rating plus a share of internal_rating (0
+    # here), so team averages are 100 and 200 - stddev of two points is
+    # half their gap (population stdev, not sample).
+    assert MeanBalanceFeature().evaluate_raw([team_a, team_b]) == 50.0
 
 
 def test_mean_balance_feature_normalizes_via_smooth_logistic_curve():
@@ -248,11 +247,11 @@ def test_outlier_penalty_feature_is_zero_for_exactly_two_teams():
 
 
 def test_outlier_penalty_feature_computes_max_absolute_deviation():
-    team_a = Team(index=0, players=[_player(100), _player(100)])  # avg final_rating 90
-    team_b = Team(index=1, players=[_player(200), _player(200)])  # avg final_rating 180
-    team_c = Team(index=2, players=[_player(160), _player(160)])  # avg final_rating 144
-    # mean=(90+180+144)/3=138, deviations -48/+42/+6 -> max absolute deviation is 48
-    assert OutlierPenaltyFeature().evaluate_raw([team_a, team_b, team_c]) == pytest.approx(48.0)
+    team_a = Team(index=0, players=[_player(100), _player(100)])  # avg final_rating 100
+    team_b = Team(index=1, players=[_player(200), _player(200)])  # avg final_rating 200
+    team_c = Team(index=2, players=[_player(160), _player(160)])  # avg final_rating 160
+    # mean=460/3, deviations -53.3/+46.7/+6.7 -> max absolute deviation is 160/3
+    assert OutlierPenaltyFeature().evaluate_raw([team_a, team_b, team_c]) == pytest.approx(160 / 3)
 
 
 def test_outlier_penalty_feature_zero_when_all_team_averages_equal():
@@ -320,7 +319,7 @@ def test_balance_evaluator_evaluate_raw_returns_unweighted_breakdown():
 
     breakdown = BalanceEvaluator().evaluate_raw([team_a, team_b], [MeanBalanceFeature()])
 
-    assert breakdown == {"mean_balance": pytest.approx(45.0)}
+    assert breakdown == {"mean_balance": pytest.approx(50.0)}
 
 
 def test_balance_evaluator_normalize_delegates_to_each_features_own_normalizer():
